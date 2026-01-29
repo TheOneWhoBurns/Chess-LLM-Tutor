@@ -66,7 +66,7 @@ class ModelManager:
         try:
             # Generate response using Claude
             message = self.client.messages.create(
-                model="claude-3-5-haiku-20241022",
+                model="claude-sonnet-4-20250514",
                 max_tokens=500,  # Keep responses concise
                 temperature=0.7,
                 system="""You are a friendly chess tutor playing as Black. You help students improve by being encouraging yet honest about their play.
