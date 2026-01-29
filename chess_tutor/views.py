@@ -64,7 +64,8 @@ def send_message(request):
             'response': response["message"],
             'status': response["status"],
             'moves': response["moves"],
-            'fen': chess_logic.get_current_position()
+            'fen': chess_logic.get_current_position(),
+            'player_stats': response.get("player_stats", chess_logic.get_player_stats())
         })
 
     except json.JSONDecodeError:

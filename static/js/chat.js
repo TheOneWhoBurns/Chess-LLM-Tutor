@@ -5,6 +5,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const userInput = document.getElementById('user-input');
     const historyContent = document.querySelector('.history-content');
 
+    // Stats elements
+    const playerEloEl = document.getElementById('player-elo');
+    const maiaLevelEl = document.getElementById('maia-level');
+    const playerRecordEl = document.getElementById('player-record');
+
+    // Track previous elo for animation
+    let previousElo = 1200;
+
     function scrollToBottom(element) {
         if (element) {
             element.scrollTop = element.scrollHeight;
@@ -31,6 +39,41 @@ document.addEventListener('DOMContentLoaded', () => {
         chatMessages.appendChild(messageElement);
     }
 
+    function updatePlayerStats(stats) {
+        if (!stats) return;
+
+        // Update Elo with animation
+        if (stats.estimated_elo !== undefined && playerEloEl) {
+            const newElo = stats.estimated_elo;
+            playerEloEl.textContent = newElo;
+
+            // Add animation class based on elo change
+            if (newElo > previousElo) {
+                playerEloEl.classList.remove('elo-down');
+                playerEloEl.classList.add('elo-up');
+                setTimeout(() => playerEloEl.classList.remove('elo-up'), 500);
+            } else if (newElo < previousElo) {
+                playerEloEl.classList.remove('elo-up');
+                playerEloEl.classList.add('elo-down');
+                setTimeout(() => playerEloEl.classList.remove('elo-down'), 500);
+            }
+            previousElo = newElo;
+        }
+
+        // Update Maia level
+        if (stats.current_maia_level !== undefined && maiaLevelEl) {
+            maiaLevelEl.textContent = stats.current_maia_level || '—';
+        }
+
+        // Update record (W-L-D)
+        if (playerRecordEl) {
+            const wins = stats.wins || 0;
+            const losses = stats.losses || 0;
+            const draws = stats.draws || 0;
+            playerRecordEl.textContent = `${wins}-${losses}-${draws}`;
+        }
+    }
+
     async function sendMessage(message) {
         try {
             addMessage('You', message);
@@ -51,6 +94,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const data = await response.json();
+
+            // Update player stats if present
+            if (data.player_stats) {
+                updatePlayerStats(data.player_stats);
+            }
 
             if (data.status === 'success') {
                 addMessage('Tutor', data.response);

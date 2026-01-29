@@ -15,6 +15,22 @@
 <body>
 <div class="container">
     <div id="board-section">
+        <!-- Player Stats Bar -->
+        <div id="stats-bar">
+            <div class="stat-item">
+                <span class="stat-label">Your Rating</span>
+                <span class="stat-value" id="player-elo">1200</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">vs Maia</span>
+                <span class="stat-value" id="maia-level">1200</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Record</span>
+                <span class="stat-value" id="player-record">0-0-0</span>
+            </div>
+        </div>
+
         <div id="board"></div>
         <div class="board-controls">
             <button onclick="resetGame()">New Game</button>

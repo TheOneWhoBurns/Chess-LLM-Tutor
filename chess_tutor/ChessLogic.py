@@ -1,15 +1,17 @@
 """
 Chess Logic Unit - Core game orchestration for the chess tutor.
 Manages game state, move processing, and coordinates with engine and LLM.
+Includes adaptive difficulty that matches Maia's level to player skill.
 """
 
 import logging
 from typing import List, Dict, Optional
 import chess
 
-from .maia_engine import MaiaEngine
+from .maia_engine import MaiaEngine, MAIA_LEVELS
 from .PromptMaker import PromptMaker
 from .chess_analyzer import ChessAnalyzer
+from .skill_estimator import SkillEstimator
 from .models import model_manager
 
 # Set up logging
@@ -18,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 class ChessLogicUnit:
     def __init__(self, project_dir: Optional[str] = None):
+        self.project_dir = project_dir
         self.board = chess.Board()
         self.move_history: List[str] = []
         self.chat_history: List[Dict[str, str]] = []
@@ -27,16 +30,43 @@ class ChessLogicUnit:
         # Initialize components
         self.prompt_maker = PromptMaker()
         self.analyzer = ChessAnalyzer()
+        self.skill_estimator = SkillEstimator()
 
-        if project_dir:
-            try:
-                self.maia_engine = MaiaEngine(project_dir)
-            except Exception as e:
-                logger.error(f"Failed to initialize Maia engine: {e}")
-                self.maia_engine = None
+        # Maia engine (initialized with adaptive level)
+        self.maia_engine: Optional[MaiaEngine] = None
+        self._init_maia_engine()
 
         # Track evaluation for move quality assessment
         self._last_eval: Optional[int] = None
+        self._pre_move_eval: Optional[int] = None
+
+    def _init_maia_engine(self):
+        """Initialize Maia engine with recommended level."""
+        if not self.project_dir:
+            return
+
+        level = self.skill_estimator.get_recommended_maia_level()
+        try:
+            self.maia_engine = MaiaEngine(self.project_dir, level=level)
+            logger.info(f"Maia engine initialized at level {level}")
+        except Exception as e:
+            logger.error(f"Failed to initialize Maia engine: {e}")
+            self.maia_engine = None
+
+    def _adjust_maia_level(self):
+        """Adjust Maia's level based on current player skill estimate."""
+        if not self.maia_engine:
+            return
+
+        recommended = self.skill_estimator.get_recommended_maia_level()
+        current = self.maia_engine.level
+
+        if recommended != current:
+            logger.info(f"Adjusting Maia level: {current} -> {recommended}")
+            try:
+                self.maia_engine.set_level(recommended)
+            except Exception as e:
+                logger.error(f"Failed to adjust Maia level: {e}")
 
     def get_move_history(self) -> List[str]:
         """Get the history of moves"""
@@ -45,6 +75,12 @@ class ChessLogicUnit:
     def get_current_position(self) -> str:
         """Get current FEN position"""
         return self.board.fen()
+
+    def get_player_stats(self) -> Dict:
+        """Get player statistics and current Maia level."""
+        stats = self.skill_estimator.get_stats()
+        stats["current_maia_level"] = self.maia_engine.level if self.maia_engine else None
+        return stats
 
     def _is_player_turn(self) -> bool:
         """Check if it's the player's turn"""
@@ -65,28 +101,43 @@ class ChessLogicUnit:
             logger.error(f"Error getting position analysis: {e}")
             return ""
 
-    def _get_move_quality(self, move: chess.Move) -> Optional[str]:
-        """Assess the quality of a move by comparing evals before/after"""
-        if not self.maia_engine:
-            return None
+    def _evaluate_and_record_move(self, move: chess.Move) -> tuple[Optional[str], Optional[int]]:
+        """
+        Evaluate move quality and record it for skill estimation.
+        Returns (quality_description, eval_change).
+        """
+        if not self.maia_engine or self._pre_move_eval is None:
+            return None, None
 
         try:
-            # Get eval before the move
-            temp_board = self.board.copy()
-            temp_board.pop()  # Undo the move to get pre-move position
-            eval_before = self.maia_engine.get_position_evaluation(temp_board)
-
-            # Get eval after (current position, but from opponent's perspective)
+            # Get eval after move (negated since it's now opponent's turn)
             eval_after = -self.maia_engine.get_position_evaluation(self.board)
 
             # Calculate change from moving player's perspective
-            eval_change = eval_after - eval_before
+            eval_change = eval_after - self._pre_move_eval
 
-            # Use analyzer to describe the move quality
-            return self.analyzer._assess_last_move(eval_change, self.board)
+            # Classify the move
+            quality = self.maia_engine._classify_move_quality(eval_change)
+
+            # Record for skill estimation
+            self.skill_estimator.record_move(quality, eval_change)
+
+            # Get human-readable description
+            description = self.analyzer._assess_last_move(eval_change, self.board)
+
+            return description, eval_change
         except Exception as e:
-            logger.error(f"Error assessing move quality: {e}")
-            return None
+            logger.error(f"Error evaluating move: {e}")
+            return None, None
+
+    def _store_pre_move_eval(self):
+        """Store evaluation before player's move for comparison."""
+        if self.maia_engine:
+            try:
+                self._pre_move_eval = self.maia_engine.get_position_evaluation(self.board)
+            except Exception as e:
+                logger.error(f"Error getting pre-move eval: {e}")
+                self._pre_move_eval = None
 
     def handle_message(self, intent_result: Dict) -> Dict:
         """Main entry point for processing messages"""
@@ -97,26 +148,34 @@ class ChessLogicUnit:
         # Handle game management first
         if intent == "request_game":
             self._reset_game()
+            stats = self.get_player_stats()
             return {
                 "status": "success",
                 "message": self.prompt_maker.create_game_start_response(),
-                "moves": []
+                "moves": [],
+                "player_stats": stats
             }
 
         if not self.game_in_progress and message.lower() in ['yes', 'sure', 'okay', 'play', 'play again', 'new game']:
             self._reset_game()
+            stats = self.get_player_stats()
             return {
                 "status": "success",
                 "message": self.prompt_maker.create_game_start_response(),
-                "moves": []
+                "moves": [],
+                "player_stats": stats
             }
 
         if intent == "quit_game":
+            # Record game as loss if quitting mid-game
+            if self.game_in_progress and self.maia_engine:
+                self.skill_estimator.record_game_end("loss", self.maia_engine.level)
             self.game_in_progress = False
             return {
                 "status": "success",
                 "message": "Game ended. Thanks for playing!",
-                "moves": self.move_history
+                "moves": self.move_history,
+                "player_stats": self.get_player_stats()
             }
 
         # Check if game is in progress for other intents
@@ -230,7 +289,10 @@ class ChessLogicUnit:
             return False
 
     def _handle_move(self, message: str, move: str) -> Dict:
-        """Handle move intent with rich analysis"""
+        """Handle move intent with rich analysis and skill tracking"""
+        # Store evaluation before the move
+        self._store_pre_move_eval()
+
         # Special check for castling moves
         if move in ['e1-g1', 'e1-c1', 'e8-g8', 'e8-c8']:
             castling_move = 'O-O' if move in ['e1-g1', 'e8-g8'] else 'O-O-O'
@@ -255,17 +317,21 @@ class ChessLogicUnit:
                 "moves": self.move_history
             }
 
-        # Assess the quality of the player's move
-        player_move_quality = self._get_move_quality(self.board.move_stack[-1]) if self.board.move_stack else None
+        # Evaluate and record the player's move
+        player_move_quality, eval_change = self._evaluate_and_record_move(
+            self.board.move_stack[-1] if self.board.move_stack else None
+        )
 
         # Check for game end after player's move
         game_end = self._check_game_end()
         if game_end["status"] == "game_over":
+            self._record_game_result(game_end.get("result", "draw"))
             self.game_in_progress = False
             return {
                 "status": "success",
                 "message": f"{move}. {game_end['message']}",
-                "moves": self.move_history
+                "moves": self.move_history,
+                "player_stats": self.get_player_stats()
             }
 
         # Get Maia's response
@@ -285,6 +351,7 @@ class ChessLogicUnit:
             # Check for game end after Maia's move
             game_end = self._check_game_end()
             if game_end["status"] == "game_over":
+                self._record_game_result(game_end.get("result", "draw"))
                 self.game_in_progress = False
                 response_msg = f"{move}. I play {san_response}. {game_end['message']}"
                 self.chat_history.append({"role": "user", "content": message})
@@ -292,13 +359,14 @@ class ChessLogicUnit:
                 return {
                     "status": "success",
                     "message": response_msg,
-                    "moves": self.move_history
+                    "moves": self.move_history,
+                    "player_stats": self.get_player_stats()
                 }
 
             # Get rich position analysis for the LLM
             position_analysis = self._get_position_analysis()
 
-            # For lone moves, still provide brief commentary with analysis
+            # Create prompt with move quality info
             prompt = self.prompt_maker.create_move_prompt(
                 user_move=move,
                 maia_move=san_response,
@@ -316,7 +384,8 @@ class ChessLogicUnit:
             return {
                 "status": "success",
                 "message": analysis,
-                "moves": self.move_history
+                "moves": self.move_history,
+                "player_stats": self.get_player_stats()
             }
 
         except Exception as e:
@@ -326,6 +395,13 @@ class ChessLogicUnit:
                 "message": "Something went wrong processing that move.",
                 "moves": self.move_history
             }
+
+    def _record_game_result(self, result: str):
+        """Record game result for skill estimation and adjust Maia level."""
+        if self.maia_engine:
+            self.skill_estimator.record_game_end(result, self.maia_engine.level)
+            # Adjust Maia level for next game
+            self._adjust_maia_level()
 
     def _handle_explanation(self, message: str) -> Dict:
         """Handle explanation requests with comprehensive analysis"""
@@ -399,12 +475,14 @@ class ChessLogicUnit:
             if outcome.winner == chess.WHITE:
                 return {
                     "status": "game_over",
+                    "result": "win",
                     "message": "Checkmate! Congratulations, you won! Want to play again?",
                     "moves": self.move_history
                 }
             elif outcome.winner == chess.BLACK:
                 return {
                     "status": "game_over",
+                    "result": "loss",
                     "message": "Checkmate! I got you this time. Want a rematch?",
                     "moves": self.move_history
                 }
@@ -419,6 +497,7 @@ class ChessLogicUnit:
                 msg = termination_messages.get(outcome.termination, "It's a draw!")
                 return {
                     "status": "game_over",
+                    "result": "draw",
                     "message": f"{msg} Want to play again?",
                     "moves": self.move_history
                 }
@@ -430,13 +509,17 @@ class ChessLogicUnit:
         }
 
     def _reset_game(self):
-        """Reset the game state"""
+        """Reset the game state and adjust Maia level if needed."""
         self.board.reset()
         self.move_history.clear()
         self.chat_history.clear()
         self.game_in_progress = True
         self.player_color = chess.WHITE
         self._last_eval = None
+        self._pre_move_eval = None
+
+        # Adjust Maia level based on current skill estimate
+        self._adjust_maia_level()
 
     def _handle_unknown(self, message: str) -> Dict:
         """Handle unknown intents"""
