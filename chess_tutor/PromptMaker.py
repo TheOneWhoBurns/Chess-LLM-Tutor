@@ -209,7 +209,8 @@ Your response:"""
 
         lines = ["Best moves in this position:"]
         for i, move_info in enumerate(top_moves[:3], 1):
-            eval_pawns = move_info.get('evaluation', 0) / 100
+            eval_value = move_info.get('evaluation')
+            eval_pawns = (eval_value if eval_value is not None else 0) / 100
             san = move_info.get('san', '?')
             mate = move_info.get('mate')
 

@@ -406,16 +406,15 @@ class ChessAnalyzer:
         king_file = chess.square_file(king_sq)
         king_rank = chess.square_rank(king_sq)
 
-        # Check if castled
         is_castled = False
         for move in board.move_stack:
-            if board.is_castling(move):
-                # This is approximate - check if this color castled
-                from_sq = move.from_square
-                piece_moved = chess.KING
-                if chess.square_rank(from_sq) == (0 if color == chess.WHITE else 7):
-                    is_castled = True
-                    break
+            from_sq = move.from_square
+            to_sq = move.to_square
+            start_rank = 0 if color == chess.WHITE else 7
+            king_start = chess.square(4, start_rank)
+            if from_sq == king_start and abs(chess.square_file(to_sq) - chess.square_file(from_sq)) == 2:
+                is_castled = True
+                break
 
         # Count attackers near king
         opponent = not color
