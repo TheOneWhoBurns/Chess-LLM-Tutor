@@ -1,50 +1,115 @@
+"""
+Maia Chess Engine wrapper.
+
+Maia is a human-like chess engine built on Leela Chess Zero (LC0).
+It plays at various human skill levels (1100-1900 Elo).
+
+Setup: Run `python scripts/setup_maia.py` to download weights.
+"""
+
 import chess
 import chess.engine
+import logging
 import os
-import subprocess
+import shutil
+from typing import Optional, List, Dict
+
+logger = logging.getLogger(__name__)
+
+# Available Maia skill levels (Elo ratings)
+MAIA_LEVELS = [1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900]
+DEFAULT_LEVEL = 1100
+
 
 class MaiaEngine:
-    def __init__(self, project_dir):
-        self.project_dir = project_dir
-        self.weights_dir = os.path.join(project_dir, "maia-chess", "maia_weights")
-        self.engine_path = self._get_lc0_path()
-        self.engine = None
+    """
+    Wrapper for the Maia chess engine.
 
-        # Evaluation thresholds (in centipawns)
-        self.BLUNDER_THRESHOLD = -200  # -2 pawns
-        self.MISTAKE_THRESHOLD = -100   # -1 pawn
-        self.GOOD_MOVE_THRESHOLD = 50   # +0.5 pawns
-        self.EXCELLENT_MOVE_THRESHOLD = 150  # +1.5 pawns
+    Maia uses LC0 (Leela Chess Zero) with specially trained neural network
+    weights that mimic human play at various skill levels.
+    """
+
+    # Evaluation thresholds (in centipawns)
+    BLUNDER_THRESHOLD = -200   # -2 pawns
+    MISTAKE_THRESHOLD = -100   # -1 pawn
+    GOOD_MOVE_THRESHOLD = 50   # +0.5 pawns
+    EXCELLENT_MOVE_THRESHOLD = 150  # +1.5 pawns
+
+    def __init__(self, project_dir: str, level: int = DEFAULT_LEVEL):
+        """
+        Initialize the Maia engine.
+
+        Args:
+            project_dir: Path to the project root directory
+            level: Maia skill level (1100-1900 Elo)
+        """
+        self.project_dir = project_dir
+        self.level = self._validate_level(level)
+        self.weights_dir = os.path.join(project_dir, "maia-chess", "maia_weights")
+        self.engine: Optional[chess.engine.SimpleEngine] = None
 
         self._load_engine()
 
-    def _get_lc0_path(self):
-        try:
-            return subprocess.check_output(["which", "lc0"]).decode().strip()
-        except subprocess.CalledProcessError:
-            raise RuntimeError("lc0 not found in PATH. Make sure it's installed correctly.")
+    def _validate_level(self, level: int) -> int:
+        """Validate and return the closest valid Maia level."""
+        if level not in MAIA_LEVELS:
+            closest = min(MAIA_LEVELS, key=lambda x: abs(x - level))
+            logger.warning(f"Invalid Maia level {level}, using {closest}")
+            return closest
+        return level
+
+    def _get_lc0_path(self) -> str:
+        """Find the LC0 executable."""
+        lc0_path = shutil.which("lc0")
+        if lc0_path:
+            return lc0_path
+
+        # Check common locations
+        common_paths = [
+            "/usr/local/bin/lc0",
+            "/usr/bin/lc0",
+            os.path.expanduser("~/.local/bin/lc0"),
+        ]
+        for path in common_paths:
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                return path
+
+        raise RuntimeError(
+            "LC0 not found. Please install it:\n"
+            "  macOS:   brew install lc0\n"
+            "  Ubuntu:  sudo apt install lc0\n"
+            "  Or run:  python scripts/setup_maia.py"
+        )
 
     def _load_engine(self):
-        weights_file = "maia-1100.pb.gz"
+        """Initialize the chess engine with Maia weights."""
+        weights_file = f"maia-{self.level}.pb.gz"
         weights_path = os.path.join(self.weights_dir, weights_file)
+
         if not os.path.exists(weights_path):
-            raise FileNotFoundError(f"Maia weights not found at {weights_path}")
+            raise FileNotFoundError(
+                f"Maia weights not found at {weights_path}\n"
+                f"Run: python scripts/setup_maia.py --weight maia-{self.level}"
+            )
+
+        engine_path = self._get_lc0_path()
+        logger.info(f"Loading Maia-{self.level} engine from {engine_path}")
 
         self.engine = chess.engine.SimpleEngine.popen_uci([
-            self.engine_path,
+            engine_path,
             f"--weights={weights_path}"
         ])
 
-    def get_best_move(self, board, time_limit=1.0):
+    def get_best_move(self, board: chess.Board, time_limit: float = 1.0) -> chess.Move:
         """
-        Get the best move for the given board position using Maia.
+        Get the best move for the given position.
 
         Args:
-        board (chess.Board): The current board position
-        time_limit (float): Time limit for the engine to think, in seconds
+            board: Current chess position
+            time_limit: Time in seconds for engine to think
 
         Returns:
-        chess.Move: The best move according to Maia
+            The best move according to Maia
         """
         if not self.engine:
             raise RuntimeError("Engine not initialized")
@@ -52,25 +117,41 @@ class MaiaEngine:
         result = self.engine.play(board, chess.engine.Limit(time=time_limit))
         return result.move
 
-    def get_position_evaluation(self, board, time_limit=1.0):
-        """Get numerical evaluation of current position in centipawns"""
-        info = self.engine.analyse(board, chess.engine.Limit(time=time_limit), multipv=1)
-        # When using multipv, analysis returns a list of dictionaries
-        if isinstance(info, list):
-            info = info[0]  # Get first (and only) analysis
-        return info["score"].white().score(mate_score=10000)
-
-    def get_top_moves(self, board, num_moves=5, time_limit=1.0):
+    def get_position_evaluation(self, board: chess.Board, time_limit: float = 1.0) -> int:
         """
-        Get the top N moves for the current position with their evaluations.
+        Get numerical evaluation of the position.
 
         Args:
-        board (chess.Board): The current board position
-        num_moves (int): Number of top moves to return
-        time_limit (float): Time limit for analysis, in seconds
+            board: Position to evaluate
+            time_limit: Analysis time in seconds
 
         Returns:
-        List[Dict]: List of moves with their evaluations, sorted by strength
+            Evaluation in centipawns (positive = white is better)
+        """
+        if not self.engine:
+            raise RuntimeError("Engine not initialized")
+
+        info = self.engine.analyse(board, chess.engine.Limit(time=time_limit))
+
+        # Handle both single result and list format
+        if isinstance(info, list):
+            info = info[0]
+
+        score = info["score"].white()
+        return score.score(mate_score=10000)
+
+    def get_top_moves(self, board: chess.Board, num_moves: int = 5,
+                      time_limit: float = 1.0) -> List[Dict]:
+        """
+        Get the top N moves with evaluations.
+
+        Args:
+            board: Position to analyze
+            num_moves: Number of moves to return
+            time_limit: Analysis time in seconds
+
+        Returns:
+            List of dicts with move info: {move, san, evaluation, mate}
         """
         if not self.engine:
             raise RuntimeError("Engine not initialized")
@@ -83,42 +164,43 @@ class MaiaEngine:
 
         moves = []
         for pv in analysis:
-            moves.append({
-                "move": pv["pv"][0],  # The actual move
-                "san": board.san(pv["pv"][0]),  # Move in algebraic notation
-                "evaluation": pv["score"].white().score(mate_score=10000),
-                "mate": pv["score"].white().mate()
-            })
+            if "pv" in pv and pv["pv"]:
+                score = pv["score"].white()
+                moves.append({
+                    "move": pv["pv"][0],
+                    "san": board.san(pv["pv"][0]),
+                    "evaluation": score.score(mate_score=10000),
+                    "mate": score.mate()
+                })
 
         return moves
 
-    def evaluate_move_quality(self, board, move, time_limit=1.0):
+    def evaluate_move_quality(self, board: chess.Board, move: chess.Move,
+                              time_limit: float = 1.0) -> Dict:
         """
-        Evaluate the quality of a move by comparing it to the best move.
+        Evaluate how good a move is compared to the best move.
 
         Args:
-        board (chess.Board): The current board position
-        move (chess.Move): The move to evaluate
-        time_limit (float): Time limit for analysis, in seconds
+            board: Position before the move
+            move: The move to evaluate
+            time_limit: Analysis time in seconds
 
         Returns:
-        Dict: Move quality assessment with evaluation difference
+            Dict with quality assessment and evaluation change
         """
-        # Get position evaluation before move
+        # Evaluation before the move
         initial_eval = self.get_position_evaluation(board, time_limit)
 
-        # Make the move on a copy of the board
+        # Make move on a copy
         board_copy = board.copy()
         board_copy.push(move)
 
-        # Get evaluation after move
+        # Evaluation after (negated since it's opponent's turn)
         new_eval = -self.get_position_evaluation(board_copy, time_limit)
 
-        # Calculate evaluation difference
+        # Calculate change from moving player's perspective
         eval_diff = new_eval - initial_eval
-
-        # Determine move quality
-        quality = self._get_move_quality(eval_diff)
+        quality = self._classify_move_quality(eval_diff)
 
         return {
             "quality": quality,
@@ -126,16 +208,8 @@ class MaiaEngine:
             "absolute_evaluation": new_eval
         }
 
-    def _get_move_quality(self, eval_diff):
-        """
-        Determine move quality based on evaluation difference.
-
-        Args:
-        eval_diff (float): The difference in evaluation after the move
-
-        Returns:
-        str: Quality assessment of the move
-        """
+    def _classify_move_quality(self, eval_diff: int) -> str:
+        """Classify move quality based on evaluation change."""
         if eval_diff <= self.BLUNDER_THRESHOLD:
             return "Blunder"
         elif eval_diff <= self.MISTAKE_THRESHOLD:
@@ -144,16 +218,33 @@ class MaiaEngine:
             return "Excellent"
         elif eval_diff >= self.GOOD_MOVE_THRESHOLD:
             return "Good"
-        else:
-            return "Normal"
+        return "Normal"
+
+    def set_level(self, level: int):
+        """
+        Change the Maia skill level.
+
+        Args:
+            level: New skill level (1100-1900)
+        """
+        new_level = self._validate_level(level)
+        if new_level != self.level:
+            self.close()
+            self.level = new_level
+            self._load_engine()
 
     def close(self):
-        """
-        Close the engine process.
-        """
+        """Close the engine process and free resources."""
         if self.engine:
-            self.engine.quit()
-            self.engine = None
+            try:
+                self.engine.quit()
+            except Exception as e:
+                logger.warning(f"Error closing engine: {e}")
+            finally:
+                self.engine = None
 
     def __del__(self):
         self.close()
+
+    def __repr__(self):
+        return f"MaiaEngine(level={self.level})"
