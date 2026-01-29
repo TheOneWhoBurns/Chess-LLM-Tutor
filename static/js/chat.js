@@ -23,7 +23,11 @@ document.addEventListener('DOMContentLoaded', () => {
     function addMessage(sender, text) {
         const messageElement = document.createElement('div');
         messageElement.className = 'message';
-        messageElement.innerHTML = `<strong>${sender}:</strong> ${text}`;
+        // Use textContent for sender to prevent XSS, and sanitize text
+        const senderSpan = document.createElement('strong');
+        senderSpan.textContent = sender + ': ';
+        messageElement.appendChild(senderSpan);
+        messageElement.appendChild(document.createTextNode(text));
         chatMessages.appendChild(messageElement);
     }
 
@@ -52,8 +56,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 addMessage('Tutor', data.response);
                 const serverEvent = new CustomEvent('serverResponse', { detail: data });
                 window.dispatchEvent(serverEvent);
+            } else if (data.status === 'ignore') {
+                // Silent ignore for same-square moves, etc.
+                return;
+            } else if (data.status === 'error') {
+                addMessage('Tutor', data.response || 'Something went wrong.');
+                const serverEvent = new CustomEvent('serverResponse', { detail: data });
+                window.dispatchEvent(serverEvent);
             } else {
-                throw new Error('Server returned error status');
+                throw new Error('Server returned unexpected status');
             }
 
         } catch (error) {

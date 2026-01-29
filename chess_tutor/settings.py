@@ -11,21 +11,22 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 import os
 from pathlib import Path
-
-from django.contrib import staticfiles
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Load environment variables from .env file
+load_dotenv(BASE_DIR / '.env')
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-jjj^a_a&(*q&!q93kb35fbyo*=is2m481zcb*97m!p8r!nih3z"
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-dev-key-change-in-production')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 'yes')
 
 ALLOWED_HOSTS = ['AMartinez.pythonanywhere.com', 'themedance.com', 'www.themedance.com', "localhost"]
 
@@ -135,4 +136,5 @@ if STATIC_ROOT in STATICFILES_DIRS:
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-HF_TOKEN = "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"
+# HuggingFace token loaded from environment
+HF_TOKEN = os.getenv('HF_TOKEN', '')

@@ -1,5 +1,29 @@
+# Environment variables - NEVER commit these!
 .env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+staticfiles/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project specific
 static/vendor/chessboardjs-1.0.0
-/chess_tutor/__pycache__
 test_env.py
-/chess_tutor/__pycache__
+maia-chess/maia_weights/

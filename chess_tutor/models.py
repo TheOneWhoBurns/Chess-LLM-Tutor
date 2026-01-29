@@ -1,5 +1,10 @@
 # models.py
+"""
+Model manager for AI components - handles LLM and NLP pipelines.
+"""
+
 import os
+import logging
 
 from transformers import pipeline
 import torch
@@ -7,6 +12,8 @@ import anthropic
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 class ModelManager:
     _instance = None
@@ -51,7 +58,7 @@ class ModelManager:
             )
 
         except Exception as e:
-            print(f"Error initializing models: {e}")
+            logger.error(f"Error initializing models: {e}")
             raise
 
     def quick_response(self, prompt: str) -> str:
@@ -60,41 +67,20 @@ class ModelManager:
             # Generate response using Claude
             message = self.client.messages.create(
                 model="claude-3-5-haiku-20241022",
-                max_tokens=1000,  # Keep responses short
+                max_tokens=500,  # Keep responses concise
                 temperature=0.7,
-                system="""
-                
-                You are an AI chess tutor designed to play chess with users while providing instruction to help them improve their skills. Your goal is to create an engaging and educational experience for the user.
+                system="""You are a friendly chess tutor playing as Black. You help students improve by being encouraging yet honest about their play.
 
-                Your task is to evaluate the move, provide appropriate feedback, and continue the game. Follow these guidelines:
-                
-                1. Evaluate the move:
-                   - Determine if it's a normal move, a crucial move, or if the user is asking for an explanation.
-                
-                2. Respond based on the move type:
-                   - For normal moves: Provide a brief, one-line comment about the move.
-                   - For crucial moves: Explain why the move is important and its potential impact on the game.
-                   - If the user asks for an explanation: Offer insights that hint at the best move without directly revealing it.
-                
-                3. Educational focus:
-                   - Always aim to teach the user and help them improve their chess skills.
-                   - Provide broader strategic insights when appropriate.
-                   - Encourage critical thinking by asking the user questions about their move choices.
-                
-                4. Maintain a friendly and encouraging tone throughout the interaction.
-                
-                Before responding, analyze the move and plan your response
-                1. Identify the user's move and its impact on the board.
-                2. Evaluate whether it's a normal move, crucial move, or a request for explanation.
-                3. Consider potential strategic implications.
-                4. Plan your response based on the move type.
-                
-                Then, provide your response to the user.
-                
-                Remember to adapt your explanations to the apparent skill level of the user, and always strive to make the learning experience engaging and informative.
-                
-                
-                """,
+Core principles:
+- Be conversational and natural - like a friend teaching chess
+- BE HONEST about mistakes! If a move is a blunder, say so gently but clearly - this is how players learn
+- When there are tactical patterns (forks, pins, hanging pieces), point them out
+- Keep responses SHORT: 1-3 sentences for normal moves, slightly more for important teaching moments
+- Use the position analysis provided to give specific, concrete feedback
+- Reference actual squares, pieces, and threats from the analysis
+- Use "I" for yourself (Black) and "you" for the student (White)
+
+The prompt will include detailed position analysis - USE IT to make your feedback specific and helpful.""",
                 messages=[
                     {
                         "role": "user",
@@ -117,7 +103,7 @@ class ModelManager:
             return response
 
         except Exception as e:
-            print(f"Error in quick_response: {str(e)}")
+            logger.error(f"Error in quick_response: {e}")
             return self._get_fallback_response()
 
     def _get_fallback_response(self) -> str:

@@ -1,182 +1,227 @@
 # PromptMaker.py
+"""
+Prompt generation for the chess tutor LLM.
+Creates context-rich prompts that include position analysis, threats, and tactics.
+"""
+
 import re
-from typing import List, Dict
+from typing import List, Dict, Optional
+
 
 class PromptMaker:
     def __init__(self):
         # Define move pattern for detecting lone moves
-        self._move_pattern = re.compile(r'^[NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?\+?\#?$|^O-O(-O)?$')
+        self._move_pattern = re.compile(
+            r'^[NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?\+?\#?$|^O-O(-O)?$'
+        )
 
-    def create_move_prompt(self, user_move: str, maia_move: str, move_history: List[str], chat_history: List[Dict[str, str]], user_message: str) -> str:
+    def _format_move_history(self, move_history: List[str]) -> str:
+        """Format move history in standard chess notation"""
+        if not move_history:
+            return "No moves yet."
+        return " ".join(
+            f"{i//2 + 1}.{move}" if i % 2 == 0 else move
+            for i, move in enumerate(move_history)
+        )
+
+    def _format_chat_history(self, chat_history: List[Dict[str, str]], limit: int = 6) -> str:
+        """Format recent chat context"""
+        recent = chat_history[-limit:] if len(chat_history) > limit else chat_history
+        if not recent:
+            return "No previous conversation."
+        return "\n".join([
+            f"{'User' if msg['role'] == 'user' else 'You'}: {msg['content']}"
+            for msg in recent
+        ])
+
+    def create_move_prompt(self, user_move: str, maia_move: str,
+                          move_history: List[str], chat_history: List[Dict[str, str]],
+                          user_message: str, position_analysis: str = "",
+                          move_quality: Optional[str] = None) -> str:
         """
-        Create prompt for move analysis using move history and chat history
+        Create prompt for move analysis with rich position context.
 
         Args:
-            user_move: The current move made by the user
-            maia_move: The response move by Maia
-            move_history: List of all moves in the game so far in algebraic notation
-            chat_history: List of dictionaries containing previous chat messages
-                        Format: [{"role": "user"|"assistant", "content": "message"}]
+            user_move: The move made by the user
+            maia_move: The response move by Maia (engine)
+            move_history: List of all moves in the game
+            chat_history: Previous chat messages
             user_message: The current message from the user
+            position_analysis: Rich position analysis from ChessAnalyzer
+            move_quality: Assessment of the user's move quality
         """
+        moves_formatted = self._format_move_history(move_history)
+        chat_formatted = self._format_chat_history(chat_history)
 
-        # Format move history
-        moves_formatted = " ".join(f"{i//2 + 1}.{move}" if i % 2 == 0 else move
-                                   for i, move in enumerate(move_history))
+        # Build the context section
+        context_parts = []
 
-        # Format recent chat context (last 3 exchanges)
-        recent_chat = chat_history[-6:] if len(chat_history) > 6 else chat_history
-        chat_formatted = "\n".join([
-            f"{'User' if msg['role'] == 'user' else 'You'}: {msg['content']}"
-            for msg in recent_chat
-        ])
+        if position_analysis:
+            context_parts.append(position_analysis)
 
-        return f"""
-            You are an AI chess tutor designed to play chess with users while providing instruction to help them improve their skills. Your goal is to create an engaging and educational experience for the user.
-            
-            Game progress so far:
-            {moves_formatted}
-            
-            Recent conversation:
-            {chat_formatted}
-            
-            The user's latest move:
-            {user_move}
-            
-            Maia's response move:
-            {maia_move}
-            
-            Then, provide your response to the user. Your response should be very very short
-            - For normal moves: Offer a brief, one-line comment. (THIS IS THE MOST IMPORTANT PART)
-            - For crucial moves: Explain the move's importance and potential impact in 1 sentence.
-            - If explaining a concept: Provide a concise explanation that hints at the best move without revealing it directly.
-            
-            Always maintain a friendly and encouraging tone, and adapt your explanations to the apparent skill level of the user. Keep your response concise and information-dense, avoiding walls of text.
-            
-            Remember to:
-            - Make your response feel like a natural dialog not a commentary of the game that will continue as the game progress, as if being taught by another human or a friend, refer to black as "me" and white as "you", use emojis and talk casually (you may even have a bit of banter).
-            - Consider the context of any previous conversation when responding.
-            - If the user has been struggling with certain concepts (based on chat history), provide gentle guidance.
-            """
-    def create_explanation_prompt(self, move_history: List[str], chat_history: List[Dict[str, str]],
-                                  user_message: str, board_analysis: Dict) -> str:
+        if move_quality:
+            context_parts.append(f"\n=== USER'S MOVE ASSESSMENT ===\n{move_quality}")
+
+        analysis_context = "\n".join(context_parts) if context_parts else "No analysis available."
+
+        return f"""You are a friendly chess tutor playing as Black against a student (White). You're having a casual, encouraging conversation while helping them improve.
+
+=== GAME STATE ===
+Moves so far: {moves_formatted}
+User just played: {user_move}
+Your response (as Black): {maia_move}
+
+{analysis_context}
+
+=== RECENT CHAT ===
+{chat_formatted}
+
+=== YOUR TASK ===
+Respond naturally to the user's move. Your response should:
+
+1. **React to the position**:
+   - If their move was a BLUNDER or MISTAKE, gently point this out! This is critical for learning.
+   - If there are HANGING PIECES or TACTICS, mention them (especially if it helps them learn).
+   - If they made a GOOD or BRILLIANT move, acknowledge it!
+
+2. **Comment on your (Maia's) response move** - what you're trying to achieve.
+
+3. **Keep it conversational**:
+   - Talk like a friend teaching chess, not a commentary bot
+   - Use "I" for yourself (Black) and "you" for them (White)
+   - Be encouraging but honest about mistakes
+   - Use casual language, maybe an emoji here or there
+
+4. **Be concise**: 1-3 sentences max for normal moves, slightly more if there's something important to teach.
+
+User's message: "{user_message}"
+
+Respond now:"""
+
+    def create_explanation_prompt(self, move_history: List[str],
+                                 chat_history: List[Dict[str, str]],
+                                 user_message: str,
+                                 position_analysis: str = "",
+                                 top_moves_info: str = "") -> str:
         """
-        Create a detailed prompt for chess explanations using Maia analysis
+        Create a detailed prompt for chess explanations.
 
         Args:
             move_history: List of all moves in the game
-            chat_history: List of previous chat messages
+            chat_history: Previous chat messages
             user_message: Current user question
-            board_analysis: Dictionary containing Maia's analysis:
-                {
-                    'position_eval': float,  # Current position evaluation
-                    'top_moves': List[Dict],  # Top alternative moves
-                    'last_move_quality': Dict,  # Quality assessment of last move
-                }
+            position_analysis: Rich analysis from ChessAnalyzer
+            top_moves_info: Information about best moves from engine
         """
-        # Format move history
-        moves_formatted = " ".join(f"{i//2 + 1}.{move}" if i % 2 == 0 else move
-                                   for i, move in enumerate(move_history))
+        moves_formatted = self._format_move_history(move_history)
+        chat_formatted = self._format_chat_history(chat_history)
 
-        # Format recent chat
-        recent_chat = chat_history[-6:] if len(chat_history) > 6 else chat_history
-        chat_formatted = "\n".join([
-            f"{'User' if msg['role'] == 'user' else 'You'}: {msg['content']}"
-            for msg in recent_chat
-        ])
+        engine_analysis = ""
+        if top_moves_info:
+            engine_analysis = f"\n=== ENGINE SUGGESTIONS ===\n{top_moves_info}"
 
-        # Format position evaluation
-        eval_text = f"Current position evaluation: {board_analysis['position_eval']/100:.2f} pawns"
-        if board_analysis['position_eval'] > 0:
-            eval_text += " (advantage to White)"
-        elif board_analysis['position_eval'] < 0:
-            eval_text += " (advantage to Black)"
+        return f"""You are a friendly chess tutor helping a student understand the position. You're playing as Black.
 
-        # Format alternative moves
-        alt_moves = "\n".join([
-            f"- {move['san']}: evaluation {move['evaluation']/100:.2f}"
-            for move in board_analysis['top_moves'][:3]
-        ])
+=== GAME STATE ===
+Moves played: {moves_formatted}
 
-        # Format last move quality
-        last_move = board_analysis['last_move_quality']
-        move_quality = (f"The last move was considered {last_move['quality']} "
-                        f"(evaluation change: {last_move['evaluation_difference']/100:.2f})")
+{position_analysis}
+{engine_analysis}
 
-        return f"""
-            You are an AI chess tutor designed to play chess with users while providing instruction to help them improve their skills. Your goal is to create an engaging and educational experience for the user.
-            
-            Current game state:
-            {moves_formatted}
-            
-            Position Analysis:
-            {eval_text}
-            {move_quality}
-            
-            Top alternative moves:
-            {alt_moves}
-            
-            Recent conversation:
-            {chat_formatted}
-            
-            User asks: {user_message}
-            
-            Provide a clear, concise explanation that hints at the evaluation, move quality and top move without revealing it directly.:
-            Remember to :
-            1. Directly addresses the user's question
-            2. References the position evaluation, best move and analysis only when relevant or asked directly
-            3. Make your response feel like a natural dialog not a commentary of the game that will continue as the game progress, as if being taught by another human or a friend, refer to black as "me" and white as "you", use emojis and talk casually (you may even have a bit of banter).
-            
-            Always maintain a friendly and encouraging tone, and adapt your explanations to the apparent skill level of the user. Keep your response concise and information-dense, avoiding walls of text.
-            
-            Response should be informative but concise, no more than 2-3 sentences. """
+=== RECENT CHAT ===
+{chat_formatted}
 
-    def create_chat_prompt(self, move_history: List[str], chat_history: List[Dict[str, str]], user_message: str) -> str:
+=== YOUR TASK ===
+The student is asking: "{user_message}"
+
+Provide a helpful explanation that:
+1. **Directly answers their question** using the position analysis above
+2. **Teaches a concept** if relevant (tactics, strategy, common patterns)
+3. **Hints at good moves** without giving away the exact best move (let them figure it out!)
+4. **References specific details** from the analysis (threats, tactics, who's winning)
+
+Keep it conversational and encouraging. Be specific - use square names, piece names, and concrete examples from the current position.
+
+2-4 sentences is ideal. Don't overwhelm them.
+
+Your response:"""
+
+    def create_chat_prompt(self, move_history: List[str],
+                          chat_history: List[Dict[str, str]],
+                          user_message: str,
+                          position_analysis: str = "") -> str:
         """
-        Create prompt for chess questions/chat
+        Create prompt for general chess questions/chat.
 
         Args:
             move_history: List of all moves in the game
-            chat_history: List of previous chat messages
+            chat_history: Previous chat messages
             user_message: Current user message
+            position_analysis: Current position analysis (optional)
         """
-        moves_formatted = " ".join(f"{i//2 + 1}.{move}" if i % 2 == 0 else move
-                                   for i, move in enumerate(move_history))
+        moves_formatted = self._format_move_history(move_history)
+        chat_formatted = self._format_chat_history(chat_history)
 
-        recent_chat = chat_history[-6:] if len(chat_history) > 6 else chat_history
-        chat_formatted = "\n".join([
-            f"{'User' if msg['role'] == 'user' else 'You'}: {msg['content']}"
-            for msg in recent_chat
-        ])
+        position_context = ""
+        if position_analysis:
+            position_context = f"\n=== CURRENT POSITION ===\n{position_analysis}\n"
 
-        return f"""Game progress:
-                  {moves_formatted}
-                  
-                  Recent conversation:
-                  {chat_formatted}
-                  
-                  User asks: {user_message}"""
+        return f"""You are a friendly chess tutor playing as Black. The student wants to chat or ask a question.
+
+=== GAME STATE ===
+Moves played: {moves_formatted}
+{position_context}
+=== RECENT CHAT ===
+{chat_formatted}
+
+=== STUDENT'S MESSAGE ===
+"{user_message}"
+
+Respond helpfully and naturally. If they're asking about the current game, reference the position analysis. If it's a general chess question, share your knowledge. Keep it friendly and conversational!
+
+Your response:"""
 
     def create_game_start_response(self) -> str:
         """Fixed response for new game"""
-        return "Let's play! I'll be black."
+        return "Let's play! I'll be Black. Your move - show me what you've got! :)"
 
     def create_game_end_response(self, result: str) -> str:
         """Fixed response for game end"""
         responses = {
-            "resign": "Good game! Would you like to play again?",
-            "checkmate": "Checkmate! Good game! Would you like to play again?",
-            "draw": "Game drawn. Would you like to play again?",
+            "resign": "Good game! You played well. Want a rematch?",
+            "checkmate": "Checkmate! Great game - want to play again?",
+            "draw": "It's a draw! Solid play from both sides. Another game?",
         }
-        return responses.get(result, "Game over. Would you like to play again?")
+        return responses.get(result, "Game over! Would you like to play again?")
 
     def create_no_game_response(self) -> str:
         """Fixed response when no game is in progress"""
-        return "No game in progress. Type 'play' to start."
+        return "No game in progress. Type 'play' to start a new game!"
 
     def _is_lone_move(self, message: str) -> bool:
-        """Check if message is just a move notation"""
+        """Check if message is just a move notation without additional text"""
         return bool(self._move_pattern.match(message.strip()))
+
+    def format_top_moves(self, top_moves: List[Dict]) -> str:
+        """Format engine's top move suggestions for the prompt"""
+        if not top_moves:
+            return ""
+
+        lines = ["Best moves in this position:"]
+        for i, move_info in enumerate(top_moves[:3], 1):
+            eval_pawns = move_info.get('evaluation', 0) / 100
+            san = move_info.get('san', '?')
+            mate = move_info.get('mate')
+
+            if mate:
+                eval_str = f"Mate in {abs(mate)}"
+            else:
+                eval_str = f"{eval_pawns:+.1f}"
+
+            lines.append(f"  {i}. {san} (eval: {eval_str})")
+
+        return "\n".join(lines)
+
 
 # Global instance
 prompt_maker = PromptMaker()

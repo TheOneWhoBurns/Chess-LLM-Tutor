@@ -1,0 +1,16 @@
+# Django
+Django>=5.0.6
+
+# Chess
+python-chess>=1.10.0
+
+# AI/ML
+anthropic>=0.18.0
+transformers>=4.35.0
+torch>=2.0.0
+
+# Environment
+python-dotenv>=1.0.0
+
+# Utilities
+requests>=2.31.0
