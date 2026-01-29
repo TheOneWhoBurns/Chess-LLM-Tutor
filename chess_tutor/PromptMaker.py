@@ -29,10 +29,13 @@ class PromptMaker:
         recent = chat_history[-limit:] if len(chat_history) > limit else chat_history
         if not recent:
             return "No previous conversation."
-        return "\n".join([
-            f"{'User' if msg['role'] == 'user' else 'You'}: {msg['content']}"
-            for msg in recent
-        ])
+        lines = []
+        for msg in recent:
+            role = msg.get('role', 'user')
+            content = msg.get('content', '')
+            speaker = 'User' if role == 'user' else 'You'
+            lines.append(f"{speaker}: {content}")
+        return "\n".join(lines)
 
     def create_move_prompt(self, user_move: str, maia_move: str,
                           move_history: List[str], chat_history: List[Dict[str, str]],
