@@ -2,7 +2,7 @@ from typing import List, Dict
 import chess
 from .maia_engine import MaiaEngine
 from .PromptMaker import PromptMaker
-from .models import model_manager
+from .legacy_models import model_manager
 
 class ChessLogicUnit:
     def __init__(self, project_dir=None):

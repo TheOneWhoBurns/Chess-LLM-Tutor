@@ -12,7 +12,7 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 import os
 from pathlib import Path
 
-from django.contrib import staticfiles
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -22,12 +22,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-jjj^a_a&(*q&!q93kb35fbyo*=is2m481zcb*97m!p8r!nih3z"
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "nemesis-local-development-only-change-for-production")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
+if not DEBUG and not os.environ.get("DJANGO_SECRET_KEY"):
+    raise ImproperlyConfigured("Set DJANGO_SECRET_KEY before disabling debug mode.")
 
-ALLOWED_HOSTS = ['AMartinez.pythonanywhere.com', 'themedance.com', 'www.themedance.com', "localhost"]
+ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]").split(",")
 
 
 # Application definition
@@ -79,7 +81,7 @@ WSGI_APPLICATION = "chess_tutor.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "NAME": os.environ.get("NEMESIS_DB", str(BASE_DIR / "nemesis.sqlite3")),
     }
 }
 
@@ -135,4 +137,7 @@ if STATIC_ROOT in STATICFILES_DIRS:
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-HF_TOKEN = "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"
+
+SESSION_COOKIE_AGE = 60 * 60 * 24 * 365
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"

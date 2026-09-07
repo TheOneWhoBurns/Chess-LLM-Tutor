@@ -2,7 +2,7 @@
 from typing import Dict, Optional
 import re
 import chess
-from .models import model_manager
+from .legacy_models import model_manager
 
 class IntentClassifier:
     INTENTS = [

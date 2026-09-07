@@ -112,10 +112,10 @@ class MaiaEngine:
         board_copy.push(move)
 
         # Get evaluation after move
-        new_eval = -self.get_position_evaluation(board_copy, time_limit)
+        new_eval = self.get_position_evaluation(board_copy, time_limit)
 
         # Calculate evaluation difference
-        eval_diff = new_eval - initial_eval
+        eval_diff = (new_eval - initial_eval) * (1 if board.turn == chess.WHITE else -1)
 
         # Determine move quality
         quality = self._get_move_quality(eval_diff)
