@@ -1,89 +1,133 @@
 # NEMESIS
 
-**Your habits. My advantage.** A personal chess opponent that learns where one player struggles and steers play toward those positions.
+A local chess opponent for one player. NEMESIS learns which moves you tend to choose, then uses those predictions to select positions where your likely replies cost you material or position.
 
-NEMESIS upgrades the original Chess LLM Tutor thesis into a runnable, observable opponent-modelling prototype. It has a real, online-trained neural player model, a playable chess arena, persistent memory across encounters, evidence-based weakness summaries, and a baseline comparison mode. No accounts or API keys are needed for the core game.
+The application combines **Stockfish 19**, the pretrained **Maia 1500** human-move network, and a small neural adapter trained on your actual moves. It can import your public Chess.com history, evaluate personal predictions on later held-out games, and continue learning as you play locally. Live predictions are recorded before each update. Better prediction, different opponent choices, and more effective practice are separate experimental questions.
 
 ## Run locally
 
-Requires Python 3.12 or newer with the supplied lockfile (tested on Python 3.14).
+Use Python 3.12 or newer; the supplied lockfile was tested with Python 3.14. Install [LC0](https://lczero.org/play/quickstart/) separately and make its `lc0` executable available on your PATH. From the project directory:
 
 ```sh
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.lock
+python -m pip install -r requirements.lock
+python scripts/setup_engines.py
 python manage.py migrate
 python manage.py runserver 127.0.0.1:8765
 ```
 
-Open http://127.0.0.1:8765. Play White by dragging, clicking a piece and its destination, or entering SAN/UCI moves such as `e4`, `Nf3`, `O-O`, or `e2e4`. Promotion offers all four pieces. Refreshing resumes the encounter. Starting another encounter retains learning and archives the previous game. “Forget my training data” clears this browser profile after confirmation.
+The setup script downloads the pinned macOS Stockfish binary and Maia weights into `.runtime/`. It does not install LC0. On other platforms, install compatible engines and set the paths below. `requirements.lock` pins the tested Python dependencies; `requirements.txt` declares their supported ranges.
 
-`requirements.lock` records the versions tested for this upgrade. `requirements.txt` declares the compatible dependency ranges.
+Open [NEMESIS locally](http://127.0.0.1:8765). You play White without a clock. Drag a piece, select its source and destination, or enter a move such as `e4`, `Nf3`, `O-O`, or `e2e4`. Promotion supports all four pieces. Refreshing resumes the game; starting a new game retains your player model.
 
-State lives in `nemesis.sqlite3`, linked to a year-long Django session cookie. Keep that database and the browser cookie to retain your profile; a different browser or cleared cookies starts a separate profile. This is a personal local app, with no identity/account system. The original tracked `db.sqlite3` is not used or modified.
+Optional runtime settings:
+
+| Variable | Purpose |
+| --- | --- |
+| `NEMESIS_STOCKFISH` | Path to a Stockfish executable; otherwise use PATH or the downloaded macOS binary. |
+| `NEMESIS_LC0_ENGINE` | Path to LC0; otherwise use `lc0` from PATH. |
+| `NEMESIS_MAIA_WEIGHTS` | Maia weights file; default `.runtime/maia/maia-1500.pb.gz`. |
+| `NEMESIS_MAIA_BACKEND` | LC0 inference backend; default `blas`, subject to the installed build. |
+
+Both engines run locally and stay loaded between moves. No account, API key, or remote inference service is needed. Missing engines, incomplete policy output, or failed analysis return an error without saving a partial move or training update. See [the Maia runtime notes](docs/MAIA_RUNTIME.md) for inference settings, download provenance, and attribution.
+
+## Import and train on Chess.com history
+
+After installing the runtime, replace `YOUR_USERNAME` below with your lowercase Chess.com username:
+
+```sh
+python scripts/train_history.py --username YOUR_USERNAME --workers 4
+python scripts/activate_player.py --username YOUR_USERNAME --training-dir .runtime/players/YOUR_USERNAME/training
+```
+
+The training runner imports all available public monthly archives for that player using Chess.com's read-only API. It accepts valid standard-chess games, deduplicates game URLs and learns only from that player's moves, whether playing White or Black. The import manifest records skipped records and their reasons. No Chess.com login is used, and unavailable or deleted games cannot be recovered from the public API.
+
+The first run computes actual Maia probabilities for every accepted choice, using each position's full game history. `--workers 4` runs four persistent LC0 workers. Priors are cached on disk; completed older monthly downloads are reused, while the current month is refreshed. Repeating the command resumes compatible work. Source, runtime and model fingerprints prevent incompatible checkpoints from being silently reused. If those inputs change, choose a fresh training directory with `--output-dir`; existing checkpoints are not overwritten to force a match.
+
+Historical fitting uses a fixed three epochs with deterministic shuffled game order and batches of up to 64 choices from each game. Each batch applies one gradient step to all personal-adapter parameters using the same objective as live learning. The earlier 80% of games train an evaluation model; the later 20% are evaluated with that model frozen. After recording the comparison against unchanged Maia, a fresh model receives a separate three-epoch fit on all accepted games for deployment. Every player choice in the selected games is used each epoch; `samples` counts each recorded choice once rather than counting repeated epoch visits. No settings are selected from the held-out scores.
+
+The default player directory is `.runtime/players/YOUR_USERNAME/`:
+
+| Artifact | Purpose |
+| --- | --- |
+| `priors.sqlite3` | Cached Maia move distributions. |
+| `training/status.json` | Training progress. |
+| `training/checkpoint.json` | Compatible resumable training state. |
+| `training/split_model.json` | Frozen model fitted only to the earlier games. |
+| `training/deployment_model.json` | Separate model fitted to all accepted games. |
+| `training/report.json` | Dataset counts, settings and the frozen holdout comparison. |
+
+`--priors-only` fills the Maia cache without fitting a model. `--max-games` limits a smoke run; omit it to use the complete accepted history. The activation command validates and loads the completed all-history deployment model into the local profile. It refuses a partial smoke fit or mismatched artifacts. Reactivating the same artifact preserves subsequent live games and learning; activating a different model over an existing named profile is refused. Reload the application to see the account identity, imported counts and chronological holdout report under **Player model**.
+
+Once the import and Maia cache are complete, resume fitting without network access or another full prior scan:
+
+```sh
+python scripts/train_history.py --username YOUR_USERNAME --fit-only
+```
+
+`--fit-only` verifies the completed local archive cache and resumes from the last completed game checkpoint. It fails if a required prior is missing rather than replacing it with an estimate. It cannot be combined with `--priors-only`.
+
+The saved policy records its Maia runtime identity: weights, LC0 executable, inference backend, policy-wrapper code and quantization version. Activation and every live move verify that identity. A fresh live profile records it on its first move. A mismatch stops play before the move or learning update is saved; restore the matching runtime, retrain, or reset the active player model to start again. Reset remains available when the engine is unavailable.
+
+The reported holdout scores belong to `split_model.json`. They do not assess `deployment_model.json` out of sample, because its final fit includes those later games. A higher personal log loss is a worse result and is displayed as such. Subsequent live accuracy is measured separately, before learning from each new move.
 
 ## What learns
 
-The player model is a NumPy MLP: **12 inputs → 16 tanh hidden units → 1 sigmoid output**. It starts from seeded random weights, not a pretrained chess policy.
+Maia supplies a probability for every legal human move. Its pretrained weights remain frozen. A separate NumPy network learns a residual adjustment from your demonstrated choices:
 
-1. Extract bounded features **before your move**: tactical pressure, king pressure, development, pawn structure, phase, material balance, attacked undefended material, remaining material phase, pawn count, legal-move count, check, and move number.
-2. Evaluate every legal candidate from the same root and the same side's perspective. Estimated regret is `max(0, best_score - chosen_score)` in centipawns.
-3. Train on the soft label `min(regret / 300, 1)` with 24 gradient steps over up to 128 recent observations. JSON-serialized weights and replay memory persist in the database.
-4. After eight observations, rerank the opponent's candidate moves using the model's predicted regret in the resulting human-to-move position:
-
-   `personal_score = search_score + 240 × influence × predicted_regret`
-
-   Influence is zero for the first seven examples, then `min(samples / 40, 1)`. These are prototype hyperparameters, not calibrated confidence estimates.
-5. Consider only moves within **65 centipawns** of the best search score. If the best score is in the mate band, keep the search's best continuation. This bound is relative to the configured search; it does not guarantee objective chess soundness.
-
-**Baseline mode** still collects examples but disables the learned reranking. There is no hidden Elo, invented accuracy score, or predetermined weakness profile. Context summaries count estimated errors of at least 100cp and only flag a pattern after five relevant positions. A context association is not a causal diagnosis. Mean regret in profile summaries is capped at 1,000cp per observation; per-move export retains the uncapped estimate.
-
-## Chess strength and research limitations
-
-The default opponent uses a small, deterministic two-ply minimax search with material and positional heuristics. It runs without external engines, weights, or a cloud service. It is deliberately labelled **Demo search · 2 ply** in the UI. It can miss longer tactics and produce noisy teaching labels; the player network is not an independently trained chess engine.
-
-For better teaching signals, connect an installed UCI engine (for example, Stockfish):
-
-```sh
-export NEMESIS_UCI_ENGINE=/absolute/path/to/stockfish
-python manage.py runserver 127.0.0.1:8765
+```text
+personal probability = softmax(log(Maia probability) + adaptation weight × residual)
 ```
 
-For an existing lc0/Maia setup, optionally pass a weights file:
+The adapter has 222 inputs, 24 tanh hidden units, and one bounded residual per candidate move. Inputs describe the board, source and destination squares, moving and captured pieces, promotion, checks, castling, en passant, and positional context. The zero-initialized output layer starts with exactly Maia's normalized probabilities.
 
-```sh
-export NEMESIS_UCI_ENGINE=/absolute/path/to/lc0
-export NEMESIS_UCI_WEIGHTS=/absolute/path/to/maia-1100.pb.gz
+Live training minimizes move-choice log loss with a penalty for departing from the Maia prior. It keeps the latest 96 observations and trains deterministic batches of up to 24. Each replay observation contains the position, supplied Maia probabilities, and the move you made. Imported history is fitted separately before deployment; the 96-item live replay is not the limit on how many historical choices can be used. Stockfish's evaluation is recorded separately and is not a neural training label.
+
+The residual is bounded between -2 and 2. Its weight follows `samples / (samples + 64)`. This is a conservative adaptation schedule, not an estimate of confidence or proof that enough games have been played.
+
+Before each update, NEMESIS records both models' probability of your actual move, their top prediction, and their log loss. Lower log loss means the model assigned more probability to the observed choice. These measurements compare personal predictions with frozen Maia on the same sequence of moves.
+
+## How the opponent chooses
+
+Stockfish evaluates up to six candidate moves with an 80,000-node MultiPV search. The initial pool contains moves within 65 centipawns of that search's best result. For each pooled candidate, Maia and the personal adapter predict every legal human reply; Stockfish evaluates those replies with a 120,000-node MultiPV search.
+
+The later reply search refreshes each candidate's value to the negative of the best human reply's score. NEMESIS applies a second 65cp limit against the best refreshed value within the initial pool. A candidate rejected by this second check cannot be selected, even if the earlier root search rated it highly. A discovered losing mate is excluded when another candidate avoids that mate band. If the best refreshed value itself is a mate score, only candidates matching that best mate value remain eligible.
+
+Each reply's estimated loss is its difference from the best human reply, capped at 2,000 centipawns. The adaptive opponent chooses the candidate maximizing:
+
+```text
+refreshed score for NEMESIS + sum(personal reply probability × reply loss)
 ```
 
-UCI analysis requests all legal root moves with a 0.4-second budget. If the engine is missing, fails, or returns an incomplete candidate list, the app falls back to the demo search and exposes that in its status. The external UCI path is covered with mocks; a real external binary/weights pair was not exercised in this upgrade. Maia predicts human-like play, so its evaluations should not be treated as an unquestionable mistake oracle. The original Maia/LLM modules remain as legacy thesis reference, but are not imported on app startup. Their optional Transformers/Anthropic dependencies are not required by the new arena.
+These are node budgets per search, shared across its variations. Both 65cp limits are relative to finite searches within the initial candidate pool, not guarantees of objective soundness. If the best original root result is in the mate band, NEMESIS keeps Stockfish's original choice. This is one human-reply expectation layered on engine search; it does not simulate an entire future game with the personal model.
 
-This implementation establishes the mechanism of personalization. It **does not yet demonstrate** improved win rate, accurate weakness classification, or better learning outcomes for a real player. Eight observations enable experimentation; they do not establish statistical validity.
+The decision record distinguishes the original Stockfish root choice, the frozen-Maia choice, and the personal choice. Both model choices use the same refreshed scores and eligible pool. `engine_changed` means the selected move differs from the original Stockfish choice; `personal_changed` means it differs from the frozen-Maia choice and there are personal observations. A change caused only by the refreshed search is not counted as a personal change. The interface labels the original search cost separately and exposes refreshed candidate scores, costs and exclusion reasons.
 
-## Thesis evaluation
+**Baseline mode** plays Stockfish's best move while continuing to collect observations and update the personal model. Switching modes does not create independent experimental groups.
 
-Use the Field notes page to export JSON containing network state, current and up to 30 archived encounters, and move events (mode, move, regret, alternative, engine label, and whether adaptation changed the reply). Export the current game as PGN from the arena. Back up exports periodically; the archive is intentionally bounded.
+## Saved data and experiments
 
-For a credible single-player study, alternate adaptive and baseline encounters, use a stable strong evaluator, and reserve later positions/games for evaluation. Report prediction error on unseen moves, calibration, adaptation frequency, estimated strength sacrificed, and errors by context over time. Keep training/evaluation games separate; changing profiles or engines mid-comparison confounds the result. Replaying synthetic labels proves the mechanism works, not that human skill improves. See [docs/EXPERIMENT.md](docs/EXPERIMENT.md).
+Live state is saved in `nemesis.sqlite3`. Before a player is configured, a year-long browser session cookie identifies the profile, so a different browser or cleared cookies starts a separate profile. Activating an imported player writes `.runtime/player.json`: browsers using this local installation then share that configured player's model and active game. This is a one-person application with no account interface. The original tracked `db.sqlite3` is not used by this application.
 
-## Validation
+Export the current game as PGN or export the saved profile as JSON. JSON includes policy weights, bounded replay, cumulative live prediction metrics, imported training metadata when present, current events and decisions, and up to 30 archived games. It is not a replacement for the complete downloaded history and offline training artifacts. Export periodically for a study.
+
+The database, downloaded games, import manifests, policy caches, checkpoints and local player configuration are runtime data excluded from Git. Resetting the player model clears its learned policy, saved games and current game while keeping the configured account identity; it does not delete downloaded archives or training files under `.runtime/`.
+
+Profiles from the earlier version retain their active board, game counts, mode, result, and archived games. Their full former state is preserved under `legacy_v1`. The incompatible old neural weights are not reused: version 2 starts a new personal move policy and new prediction metrics.
+
+See [the experiment protocol](docs/EXPERIMENT.md) for prediction comparisons, controlled opponent comparisons, and a separate assessment of whether practice helps this player. The current implementation does not establish improved win rate, calibrated probabilities, or better learning outcomes.
+
+## Validation and source
 
 ```sh
-python manage.py test chess_tutor
+NEMESIS_TEST_REAL_MAIA=1 NEMESIS_TEST_REAL_ENGINES=1 python manage.py test chess_tutor
 python manage.py check
 python manage.py makemigrations --check --dry-run
 ```
 
-Tests cover neural learning and serialization, a trained network changing a real chess continuation, cold-start gating, move-strength and mate constraints, legal game play, terminal positions, castling, underpromotion, persistence, browser isolation, request revisions, CSRF, exports, and transaction rollback on engine failure.
+Checks cover legal neural probabilities, learning from demonstrated moves, pre-update metrics, serialization, move selection and score perspectives, cost and mate constraints, special moves, persistence, migration, and rollback on engine failure. Import checks cover validation, deduplication, chronological ordering and resumable archive handling. The optional real-engine tests require the installed engine dependencies. Run the commands above for the current test results; passing implementation checks does not establish effective personalization.
 
-## Project map
+The active opponent is implemented in `chess_tutor/maia_policy.py`, `player_policy.py`, `opponent.py`, and `views.py`. Public history import is in `chess_tutor/chesscom_import.py`. The board interface is in `templates/chat.html`, `static/css/main.css`, and `static/js/nemesis.js`. Remaining original tutor modules are not the active opponent.
 
-- `chess_tutor/nemesis.py`: features, neural player model, search and move selection.
-- `chess_tutor/views.py`: authoritative game actions, revision checks, profile persistence, PGN/JSON exports.
-- `chess_tutor/models.py` and `migrations/`: player state and schema.
-- `templates/chat.html`, `static/css/main.css`, `static/js/nemesis.js`: responsive arena, profile, and experiment notes.
-- `chess_tutor/ChessLogic.py`, `intent.py`, `PromptMaker.py`, `legacy_models.py`, `maia_engine.py`: preserved original thesis implementation. The Maia evaluation sign error is fixed.
-
-Django defaults to local development. For deployment, set `DJANGO_DEBUG=0`, `DJANGO_SECRET_KEY`, and `DJANGO_ALLOWED_HOSTS`, and configure HTTPS/static serving. Environment variables are read from the process; `.env` is a reference file, not automatically loaded. The old hardcoded service token was removed from settings; if it was real, revoke/rotate it because it still exists in Git history. No external service is called by the default application.
-
-Technical references: [python-chess engine API](https://python-chess.readthedocs.io/en/latest/engine.html), [Django transactions](https://docs.djangoproject.com/en/5.2/topics/db/transactions/).
+Stockfish, LC0, and Maia are upstream projects; NEMESIS does not claim their pretrained work as its own. Runtime downloads stay outside Git. This repository defaults to a local Django development server.

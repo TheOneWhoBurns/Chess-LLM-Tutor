@@ -1,4 +1,4 @@
-"""Persistent, browser-scoped NEMESIS player state."""
+"""Persistent NEMESIS player state for a local identity or browser session."""
 import uuid
 
 from django.db import models

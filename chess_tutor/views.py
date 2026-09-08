@@ -1,4 +1,4 @@
-"""Single-player API. Cookies identify the personal profile; no account required."""
+"""Single-player API with a local trained profile or a browser session profile."""
 import json
 import logging
 
@@ -12,23 +12,46 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import PlayerProfile
-from .nemesis import Evaluator, PlayerNetwork, choose_move, features, observe, weakness_summary
+from .personal_profile import active_username, named_profile_id
+from .player_policy import PersonalPolicy
+from .runtime_identity import current_maia_fingerprint
+from .opponent import EngineUnavailable, MaiaUnavailable, engine_room
 
 LOGGER = logging.getLogger(__name__)
 
 
 def initial_state():
-    return {"network": PlayerNetwork().dump(), "stats": {}, "moves": [], "events": [],
+    return {"version": 2, "policy": PersonalPolicy().dump(), "moves": [], "events": [],
             "games": 1, "completed": 0, "total_loss": 0, "mode": "adaptive", "archive": [],
-            "engine": "Demo search · 2 ply", "result": "*"}
+            "decision": None, "result": "*", "metrics": {"count": 0, "prior_loss": 0., "personal_loss": 0.,
+            "prior_hits": 0, "personal_hits": 0}}
 
 
 def profile_for(request):
     profile_id = request.session.get("nemesis_profile")
+    # This local installation belongs to one person. A trained Chess.com model
+    # can become the default across this person's browsers without an account UI.
+    configured = active_username()
+    if configured:
+        named_id = str(named_profile_id(configured))
+        if PlayerProfile.objects.filter(pk=named_id).exists():
+            profile_id = named_id
+            if request.session.get("nemesis_profile") != named_id:
+                request.session["nemesis_profile"] = named_id
     profile = PlayerProfile.objects.filter(pk=profile_id).first() if profile_id else None
     if profile is None:
         profile = PlayerProfile.objects.create(state=initial_state())
         request.session["nemesis_profile"] = str(profile.pk)
+    elif profile.state.get("version") != 2:
+        # Regret-regressor weights cannot be interpreted as a move-choice policy.
+        # Preserve old research data and the active board; start new policy metrics.
+        old = profile.state
+        migrated = initial_state()
+        migrated.update({key: old[key] for key in ("moves", "games", "completed", "mode", "archive", "result") if key in old})
+        migrated["legacy_v1"] = old
+        PlayerProfile.objects.filter(pk=profile.pk, revision=profile.revision).update(
+            state=migrated, revision=F("revision") + 1)
+        profile.refresh_from_db()
     return profile
 
 
@@ -39,6 +62,18 @@ def restore_board(state):
     return board
 
 
+def runtime_error(state):
+    expected = state.get("policy_fingerprint")
+    if expected:
+        try:
+            if expected == current_maia_fingerprint():
+                return None
+        except OSError:
+            pass
+        return "The Maia runtime differs from this player's training run. Restore it or retrain before playing."
+    return None
+
+
 def public_state(profile):
     state = profile.state
     board = chess.Board()
@@ -47,22 +82,27 @@ def public_state(profile):
         move = board.parse_uci(uci)
         history.append(board.san(move))
         board.push(move)
-    net = PlayerNetwork(state["network"])
-    rows = weakness_summary(state["stats"])
-    supported = [r for r in rows if r["supported"] and r["errors"]]
-    target = max(supported, key=lambda r: r["mean_loss"])["name"] if supported else None
+    samples = state["policy"]["samples"]
+    metrics = state["metrics"]
+    live_samples = metrics.get("count", samples)
     game_over = state["result"] != "*" or board.is_game_over()
+    status = engine_room().status()
+    error = runtime_error(state)
+    if error:
+        status.update(ready=False, engine_error=error)
     return {"revision": profile.revision, "fen": board.fen(), "moves": history,
             "legal_moves": [m.uci() for m in board.legal_moves] if not game_over else [],
             "last_move": state["moves"][-1] if state["moves"] else None,
             "in_check": board.is_check(), "game_over": game_over, "result": state["result"],
             "turn": "white" if board.turn else "black", "mode": state["mode"],
-            "events": state["events"][-30:], "archive": state["archive"],
-            "profile": {"samples": net.samples, "phase": "Adapting" if net.influence else "Calibrating",
-                        "influence": round(net.influence * 100), "weaknesses": rows,
-                        "target": target, "games": state["games"], "completed": state["completed"],
-                        "mean_loss": round(state["total_loss"] / net.samples) if net.samples else None},
-            "engine": state["engine"]}
+            "events": state["events"][-50:], "archive": state["archive"], "decision": state["decision"],
+            "profile": {"samples": samples, "live_samples": live_samples, "username": state.get("username"),
+                        "training": state.get("training"), "games": state["games"], "completed": state["completed"],
+                        "mean_loss": round(state["total_loss"] / live_samples) if live_samples else None,
+                        "prior_log_loss": metrics["prior_loss"] / live_samples if live_samples else None,
+                        "personal_log_loss": metrics["personal_loss"] / live_samples if live_samples else None,
+                        "prior_hits": metrics["prior_hits"], "personal_hits": metrics["personal_hits"]},
+            **status}
 
 
 @ensure_csrf_cookie
@@ -78,6 +118,9 @@ def state_view(request):
 
 
 def apply_move(state, text):
+    error = runtime_error(state)
+    if error:
+        raise EngineUnavailable(error)
     board = restore_board(state)
     if state["result"] != "*" or board.is_game_over():
         raise ValueError("This game has ended. Start a new game to play again.")
@@ -90,36 +133,36 @@ def apply_move(state, text):
         move = board.parse_uci(clean.replace("-", ""))
     if move not in board.legal_moves:
         raise ValueError("That move is not legal in this position.")
-    x = features(board)
-    network = PlayerNetwork(state["network"])
+    if not state.get("policy_fingerprint"):
+        state["policy_fingerprint"] = current_maia_fingerprint()
+    policy = PersonalPolicy(state["policy"])
     san = board.san(move)
     move_number = board.fullmove_number
-    with Evaluator() as evaluator:
-        ranked = evaluator.rank(board)
-        chosen_score = next(c["score"] for c in ranked if c["move"] == move)
-        loss = max(0., ranked[0]["score"] - chosen_score)
-        best_san = board.san(ranked[0]["move"])
-        network.learn(x, loss)
-        observe(state["stats"], x, loss)
+    with engine_room().turn() as room:
+        observation = room.observe(board, move, policy)
         board.push(move)
         state["moves"].append(move.uci())
-        event = {"number": move_number, "player": san, "loss_cp": round(loss),
-                 "alternative": best_san, "adapted": False, "mode": state["mode"],
-                 "training_engine": evaluator.name,
-                 "quality": "Blunder" if loss >= 200 else "Mistake" if loss >= 100 else "Steady"}
+        event = {**observation, "number": move_number, "player": san, "mode": state["mode"],
+                 "adapted": False}
+        state["decision"] = None
         if not board.is_game_over():
-            candidates = evaluator.rank(board)
-            selected, changed = choose_move(board, candidates, network, state["mode"] == "adaptive")
-            reply = selected["move"]
+            reply, decision = room.choose(board, policy, state["mode"])
             event["opponent"] = board.san(reply)
-            event["adapted"] = changed
-            event["search_cost_cp"] = round(candidates[0]["score"] - selected["score"])
+            event["adapted"] = decision["personal_changed"]
+            event["engine_changed"] = decision["engine_changed"]
+            event["search_cost_cp"] = decision["engine_cost_cp"]
+            event["decision"] = decision
+            state["decision"] = decision
             board.push(reply)
             state["moves"].append(reply.uci())
-        state["engine"] = evaluator.name
-        event["engine"] = evaluator.name
-    state["network"] = network.dump()
-    state["total_loss"] += round(min(loss, 1000))
+    state["policy"] = policy.dump()
+    state["total_loss"] += observation["loss_cp"]
+    metrics = state["metrics"]
+    metrics["count"] = metrics.get("count", policy.samples - 1) + 1
+    metrics["prior_loss"] += observation["prior_log_loss"]
+    metrics["personal_loss"] += observation["personal_log_loss"]
+    metrics["prior_hits"] += int(observation["prior_hit"])
+    metrics["personal_hits"] += int(observation["personal_hit"])
     state["events"].append(event)
     if board.is_game_over():
         state["result"] = board.result()
@@ -133,7 +176,7 @@ def new_game(state, mode):
         state["archive"] = ([{"game": state["games"], "moves": list(state["moves"]),
                               "events": list(state["events"]), "mode": state["mode"],
                               "result": state["result"]}] + state["archive"])[:30]
-    state.update(moves=[], events=[], result="*", mode=mode, games=state["games"] + 1)
+    state.update(moves=[], events=[], result="*", mode=mode, games=state["games"] + 1, decision=None)
 
 
 @require_POST
@@ -168,6 +211,8 @@ def action_view(request):
                 new_game(state, data.get("mode", state["mode"]))
             elif action == "forget":
                 state = initial_state()
+                if profile.state.get("username"):
+                    state["username"] = profile.state["username"]
             else:
                 board = restore_board(state)
                 if state["result"] != "*" or board.is_game_over():
@@ -182,6 +227,8 @@ def action_view(request):
         return JsonResponse(result)
     except (ValueError, UnicodeDecodeError) as error:
         return JsonResponse({"error": str(error)}, status=400)
+    except (EngineUnavailable, MaiaUnavailable) as error:
+        return JsonResponse({"error": str(error)}, status=503)
     except OperationalError:
         return JsonResponse({"error": "NEMESIS is busy. Please retry your move."}, status=409)
     except Exception:
@@ -193,7 +240,7 @@ def action_view(request):
 def export_view(request):
     profile = profile_for(request)
     if request.GET.get("format") == "json":
-        response = JsonResponse({"version": 1, "state": profile.state}, json_dumps_params={"indent": 2})
+        response = JsonResponse({"version": 2, "state": profile.state}, json_dumps_params={"indent": 2})
         response["Content-Disposition"] = 'attachment; filename="nemesis-research.json"'
         return response
     game = chess.pgn.Game.from_board(restore_board(profile.state))
