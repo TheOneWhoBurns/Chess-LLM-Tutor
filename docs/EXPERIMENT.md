@@ -14,6 +14,8 @@ Reply loss is the difference from the best human reply, capped at 2,000cp before
 
 Node budgets are shared across all variations in each search; they are not per-move budgets. Both finite-search scores and their 65cp limits can be inaccurate, and candidates outside the initial root pool are not recovered by the refreshed comparison. Record versions, settings, and returned search depth/nodes when interpreting results.
 
+The optional Astra chat is a separate coaching intervention. It uses OpenAI's Responses API with `gpt-6-astra` and low reasoning effort. The server requires a valid `OPENAI_API_KEY`; local opponent play and personal-adapter training do not. Chat requests send the current board, selected Stockfish and personal-model evidence, aggregate training results, and recent conversation with `store: false`. They exclude neural weights, replay buffers, and full downloaded archives. Completed exchanges and their evidence snapshots are stored locally; JSON exports include the transcript, model identifiers, and position labels. Keep the database to preserve those coaching evidence snapshots. Asking the coach does not change a board, policy, or training metric; its advice can still influence the player's subsequent choices.
+
 ## Imported data and chronological evaluation
 
 The importer reads the requested player's public Chess.com archive index and monthly game records. Requests are serial and older completed months are cached; the current month is refreshed. A manifest records archive hashes, accepted games, observed choices and skip reasons. Games are deduplicated by their API URL, validated by replaying the PGN, and sorted by game end time with URL as a stable tie-breaker. Standard chess is supported; malformed records, nonstandard variants and records that do not identify the requested player are excluded and counted. Public archives cannot supply unavailable or deleted games.
@@ -72,6 +74,8 @@ The live baseline mode continues training the same adapter. Alternating ordinary
 ## Practice outcomes and reproducibility
 
 Before a training study, define a session schedule, assessment procedure, and success measure. Use independent assessment positions before and after practice, control access to hints, and keep game conditions consistent. Randomize or counterbalance practice conditions where feasible, and disclose order effects and the limitations of a single subject. The present app plays White without a clock; it does not record decision time.
+
+Keep Astra access consistent between opponent conditions, or study coaching as a separate condition. Record when advice was available and requested, retain the transcript and model identifier, and withhold hints during independent assessments. An improvement after coached practice cannot be attributed solely to the adaptive opponent. Engine-grounded context reduces unsupported claims but does not make every generated explanation correct; review advice used as study material. Mocked chat tests verify integration behavior, not provider availability or teaching effectiveness.
 
 Save a JSON export after every session, including policy snapshots and decision records. Retain the matching game PGNs, import manifest, offline training report, evaluation and deployment checkpoints, code revision, Stockfish and LC0 versions, Maia weights hash, backend, and engine settings. The setup uses pinned Stockfish and Maia artifacts; record the installed LC0 version as well.
 

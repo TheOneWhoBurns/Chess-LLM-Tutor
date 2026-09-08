@@ -5,6 +5,9 @@
   const pieceNames = {p:'pawn', n:'knight', b:'bishop', r:'rook', q:'queen', k:'king'};
   let state = null, board = null, busy = false, connected = false, selected = null;
   let pendingPromotion = null, confirmation = null, lastDrag = 0, retryTimer = null;
+  let chat = {messages:[], ready:false, model:null};
+  let chatLoading = true, chatLoadActive = false, chatBusy = false, chatFailure = '', chatRetryMode = 'load';
+  let pendingChat = null, renderedChat = null;
   const number = (value, digits = 0) => value === null || value === undefined || !Number.isFinite(Number(value)) ? '—' : Number(value).toFixed(digits);
   const probability = value => value === null || value === undefined ? '—' : `${number(Number(value) * 100, 1)}%`;
   const cp = value => value === null || value === undefined ? '—' : `${number(value)} cp`;
@@ -34,6 +37,7 @@
   }
 
   function renderStatus() {
+    renderChatControls();
     const ready = available();
     byId('engine-status').classList.toggle('ready', ready);
     byId('engine-status').classList.toggle('error', (!connected && !busy) || !!state?.engine_error);
@@ -74,6 +78,138 @@
 
   async function readResponse(response) {
     try {return await response.json();} catch (_) {throw new Error(`The server returned an unreadable response (${response.status}).`);}
+  }
+
+  function coachName(model = chat.model) {
+    return model === 'gpt-6-astra' ? 'Astra' : model || 'Coach';
+  }
+
+  function renderChatControls() {
+    const canSend = chat.ready && !chatLoading && !chatBusy && !busy && !!state && connected;
+    byId('chat-input').disabled = chatBusy;
+    byId('chat-send').disabled = !canSend || !byId('chat-input').value.trim();
+    byId('chat-form').setAttribute('aria-busy', String(chatBusy));
+    byId('chat-thinking').hidden = !chatBusy;
+    byId('chat-retry').disabled = chatLoading || chatBusy || busy;
+    document.querySelectorAll('[data-chat-prompt]').forEach(button => {button.disabled = chatBusy;});
+    byId('chat-model').classList.toggle('ready', chat.ready && !chatLoading && !chatFailure);
+    put('chat-model', chatLoading ? 'Connecting…' : !chat.ready ? `${coachName()} · Unavailable` : chatFailure ? `${coachName()} · Check connection` : coachName());
+    byId('chat-model').title = chat.model || 'Connecting to the configured coaching model';
+    if (state) {
+      const move = Math.floor((state.moves?.length || 0) / 2) + 1;
+      put('chat-context', `Game ${state.profile?.games || 1} · ${state.game_over ? 'Game complete' : `Move ${move} · ${state.turn === 'black' ? 'Black' : 'White'} to move`}`);
+    }
+    const error = chatFailure || (!chatLoading && !chat.ready ? 'The coaching connection is unavailable.' : '');
+    byId('chat-error').hidden = !error;
+    put('chat-error-copy', error);
+    byId('chat-retry').hidden = chatRetryMode === 'none';
+    put('chat-retry', chatRetryMode === 'send' ? 'Retry message' : 'Check connection');
+  }
+
+  function renderChat(scroll = false) {
+    const history = byId('chat-messages');
+    const messages = Array.isArray(chat.messages) ? chat.messages.filter(message => ['user', 'assistant'].includes(message.role) && typeof message.content === 'string') : [];
+    const key = JSON.stringify([messages, chatBusy ? pendingChat?.message : null, chat.model]);
+    if (key !== renderedChat) {
+      const nearBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 60;
+      const oldScroll = history.scrollTop;
+      history.replaceChildren();
+      const add = (message, pending = false) => {
+        const entry = node('article', `chat-message ${message.role}${pending ? ' pending' : ''}`);
+        const heading = node('div', 'chat-message-heading');
+        heading.append(node('strong', '', message.role === 'user' ? 'You' : coachName(message.model || chat.model)));
+        if (message.context_label || pending) heading.append(node('span', 'chat-message-context', pending ? 'Sending…' : message.context_label));
+        entry.append(heading, node('div', 'chat-message-content', message.content));
+        history.append(entry);
+      };
+      messages.forEach(message => add(message));
+      if (chatBusy && pendingChat) add({role:'user', content:pendingChat.message}, true);
+      if (!messages.length && !chatBusy) {
+        const empty = node('div', 'chat-empty');
+        empty.append(node('h3', '', 'Talk through your game.'), node('p', '', 'Ask about a mistake, NEMESIS’s last move, or what to practice next.'));
+        history.append(empty);
+      }
+      renderedChat = key;
+      history.scrollTop = scroll || nearBottom ? history.scrollHeight : oldScroll;
+    } else if (scroll) history.scrollTop = history.scrollHeight;
+    renderChatControls();
+  }
+
+  async function loadChat() {
+    if (chatBusy || chatLoadActive) return;
+    chatLoadActive = true;
+    chatLoading = true;
+    renderChatControls();
+    try {
+      const response = await fetch('/api/chat/', {cache:'no-store', signal:AbortSignal.timeout(20000)});
+      const result = await readResponse(response);
+      if (Array.isArray(result.messages)) chat.messages = result.messages;
+      if (typeof result.model === 'string') chat.model = result.model;
+      chat.ready = response.ok && result.ready === true;
+      chatFailure = result.error || (response.ok ? '' : `Cannot load the coach (${response.status}).`);
+      chatRetryMode = 'load';
+    } catch (error) {
+      chat.ready = false;
+      chatFailure = error.name === 'TimeoutError' ? 'The coaching connection timed out. Your game is still available.' : error.message || 'Cannot connect to the coach. Your game is still available.';
+      chatRetryMode = 'load';
+    } finally {
+      chatLoading = false;
+      chatLoadActive = false;
+      renderChat(true);
+    }
+  }
+
+  async function sendChat(retry = false) {
+    const message = retry && pendingChat ? pendingChat.message : byId('chat-input').value.trim();
+    if (!message || !chat.ready || chatLoading || chatBusy || busy || !state || !connected) return;
+    if (!pendingChat || pendingChat.message !== message) {
+      pendingChat = {message, revision:state.revision, request_id:crypto.randomUUID()};
+    }
+    const request = pendingChat;
+    const restoreFocus = byId('chat-panel').contains(document.activeElement);
+    chatBusy = true;
+    chatFailure = '';
+    renderChat(true);
+    try {
+      const response = await fetch('/api/chat/', {
+        method:'POST', headers:{'Content-Type':'application/json', 'X-CSRFToken':document.querySelector('[name=csrfmiddlewaretoken]').value},
+        body:JSON.stringify(request), signal:AbortSignal.timeout(150000)
+      });
+      const result = await readResponse(response);
+      if (Array.isArray(result.messages)) chat.messages = result.messages;
+      if (typeof result.model === 'string') chat.model = result.model;
+      if (typeof result.ready === 'boolean') chat.ready = result.ready;
+      if (!response.ok) {
+        chatFailure = result.error || `The coach could not reply (${response.status}).`;
+        chatRetryMode = chat.ready ? 'send' : 'load';
+        if (response.status === 409 && result.error_code === 'chat_busy') {
+          chatFailure += ' Retry in a moment to check for the reply.';
+          chatRetryMode = 'send';
+        } else if (response.status === 409) {
+          pendingChat = null;
+          chatRetryMode = 'none';
+          chatFailure += ' Your draft is kept. Please send it again.';
+          if (!busy) {
+            try {await loadState();} catch (_) {notice('Reconnect to refresh the board before sending your message.', true);}
+          }
+        }
+        return;
+      }
+      if (!Array.isArray(result.messages)) throw new Error('The server did not return the conversation. Retry to check your saved reply.');
+      pendingChat = null;
+      byId('chat-input').value = '';
+      chatRetryMode = 'load';
+      if (!busy && result.revision !== undefined && result.revision !== state.revision) {
+        try {await loadState();} catch (_) {notice('Reconnect to refresh the saved board position.', true);}
+      }
+    } catch (error) {
+      chatFailure = error.name === 'TimeoutError' ? 'The coach is taking longer than expected. Retry to check for your reply; your message will not be sent twice.' : error.message || 'The coaching connection was interrupted. Your draft is kept.';
+      chatRetryMode = 'send';
+    } finally {
+      chatBusy = false;
+      renderChat(true);
+      if (restoreFocus && !byId('chat-panel').hidden && (document.activeElement === document.body || byId('chat-panel').contains(document.activeElement))) byId('chat-input').focus({preventScroll:true});
+    }
   }
 
   async function loadState() {
@@ -346,6 +482,7 @@
       byId(`${button.dataset.tab}-panel`).hidden = !active;
       if (active && focus) button.focus();
     });
+    if (name === 'chat') renderChat(true);
   }
 
   board = Chessboard('board', {
@@ -370,6 +507,28 @@
     highlightSquares();
   });
   byId('move-form').addEventListener('submit', event => {event.preventDefault(); if (canPlay()) act('move', {move:byId('move-input').value.trim()});});
+  byId('chat-form').addEventListener('submit', event => {event.preventDefault(); sendChat();});
+  byId('chat-input').addEventListener('input', () => {
+    if (pendingChat && pendingChat.message !== byId('chat-input').value.trim()) {
+      pendingChat = null;
+      if (chatRetryMode === 'send') chatRetryMode = 'none';
+    }
+    renderChatControls();
+  });
+  byId('chat-input').addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      sendChat();
+    }
+  });
+  byId('chat-retry').addEventListener('click', () => chatRetryMode === 'send' ? sendChat(true) : loadChat());
+  document.querySelectorAll('[data-chat-prompt]').forEach(button => button.addEventListener('click', () => {
+    byId('chat-input').value = button.dataset.chatPrompt;
+    pendingChat = null;
+    if (chatRetryMode === 'send') chatRetryMode = 'none';
+    renderChatControls();
+    byId('chat-input').focus({preventScroll:true});
+  }));
   byId('flip-board').addEventListener('click', () => {
     board.flip();
     const flipped = board.orientation() === 'black';
@@ -403,12 +562,14 @@
     button.addEventListener('keydown', event => {
       if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
         event.preventDefault();
-        switchTab(event.key === 'Home' ? 'analysis' : event.key === 'End' ? 'player' : button.dataset.tab === 'analysis' ? 'player' : 'analysis', true);
+        const names = ['chat', 'analysis', 'player'];
+        const index = names.indexOf(button.dataset.tab);
+        switchTab(event.key === 'Home' ? names[0] : event.key === 'End' ? names[names.length - 1] : names[(index + (event.key === 'ArrowRight' ? 1 : names.length - 1)) % names.length], true);
       }
     });
   });
   byId('reconnect').addEventListener('click', reconnect);
-  window.addEventListener('online', () => {if (!connected) reconnect();});
+  window.addEventListener('online', () => {if (!connected) reconnect(); if (!chat.ready && !chatLoading && !chatBusy) loadChat();});
   let resizeFrame;
   window.addEventListener('resize', () => {cancelAnimationFrame(resizeFrame); resizeFrame = requestAnimationFrame(() => {board.resize(); highlightSquares();});});
   setBusy(true);
@@ -416,5 +577,5 @@
     connected = false;
     notice(error.message || 'Cannot connect to the local server.', true);
     retryTimer = setTimeout(reconnect, 6000);
-  }).finally(() => setBusy(false));
+  }).finally(() => {setBusy(false); loadChat();});
 })();

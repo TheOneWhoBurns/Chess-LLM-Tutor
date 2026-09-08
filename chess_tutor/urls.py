@@ -17,7 +17,7 @@ Including another URLconf
 
 from django.contrib import admin
 from django.urls import path
-from . import views
+from . import chat_views, views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -25,5 +25,6 @@ urlpatterns = [
     path('api/state/', views.state_view, name='state'),
     path('api/action/', views.action_view, name='action'),
     path('api/export/', views.export_view, name='export'),
-    path('send_message/', views.action_view, name='send_message'),
+    path('api/chat/', chat_views.chat_api, name='chat_api'),
+    path('send_message/', chat_views.chat_api, name='send_message'),
 ]

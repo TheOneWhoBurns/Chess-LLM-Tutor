@@ -2,7 +2,7 @@
 
 A local chess opponent for one player. NEMESIS learns which moves you tend to choose, then uses those predictions to select positions where your likely replies cost you material or position.
 
-The application combines **Stockfish 19**, the pretrained **Maia 1500** human-move network, and a small neural adapter trained on your actual moves. It can import your public Chess.com history, evaluate personal predictions on later held-out games, and continue learning as you play locally. Live predictions are recorded before each update. Better prediction, different opponent choices, and more effective practice are separate experimental questions.
+The application combines **Stockfish 19**, the pretrained **Maia 1500** human-move network, and a small neural adapter trained on your actual moves. It can import your public Chess.com history, evaluate personal predictions on later held-out games, and continue learning as you play locally. An optional **Astra coach** restores conversational help alongside the board. Live predictions are recorded before each update. Better prediction, different opponent choices, and more effective practice are separate experimental questions.
 
 ## Run locally
 
@@ -29,8 +29,17 @@ Optional runtime settings:
 | `NEMESIS_LC0_ENGINE` | Path to LC0; otherwise use `lc0` from PATH. |
 | `NEMESIS_MAIA_WEIGHTS` | Maia weights file; default `.runtime/maia/maia-1500.pb.gz`. |
 | `NEMESIS_MAIA_BACKEND` | LC0 inference backend; default `blas`, subject to the installed build. |
+| `OPENAI_API_KEY` | Optional server-side key for the Astra coach; requires access to `gpt-6-astra`. |
 
-Both engines run locally and stay loaded between moves. No account, API key, or remote inference service is needed. Missing engines, incomplete policy output, or failed analysis return an error without saving a partial move or training update. See [the Maia runtime notes](docs/MAIA_RUNTIME.md) for inference settings, download provenance, and attribution.
+Both chess engines run locally and stay loaded between moves. Chess play and personal-model training need no API key or remote inference service. Missing engines, incomplete policy output, or failed analysis return an error without saving a partial move or training update. See [the Maia runtime notes](docs/MAIA_RUNTIME.md) for inference settings, download provenance, and attribution.
+
+## Astra chat
+
+Open **Chat** beside the board to ask about your last mistake, NEMESIS's decision, or what to practice. Set `OPENAI_API_KEY` in the Django server's environment and restart the server to enable it. `.env.example` documents the settings; `.env` files are not loaded automatically. The key stays on the server. Configuration detection does not verify account access: an invalid key, unavailable model, or exhausted quota produces an explicit chat error, with no substitute model. The local opponent remains usable without chat.
+
+The coach calls OpenAI's [Responses API](https://developers.openai.com/api/docs/guides/text) with `gpt-6-astra`, low reasoning effort, and `store: false`. Each request sends your message, recent conversation, the current board and move history, selected personal-model predictions, recent recorded mistakes, aggregate training results, and fresh Stockfish analysis when available. Neural weights, replay buffers, and the downloaded game archive are excluded from this coaching context. Completed conversations and their evidence snapshots are saved in the local database. JSON exports include the transcript, model identifiers, and game/position labels.
+
+Chat explains evidence and offers practice advice; it does not play moves, modify the personal model, or train on the conversation. Historical move prediction alone cannot establish a recurring chess weakness, and the coach is instructed to distinguish predicted replies from mistakes you actually made. Control access to coaching when comparing practice outcomes.
 
 ## Import and train on Chess.com history
 
@@ -110,7 +119,7 @@ The decision record distinguishes the original Stockfish root choice, the frozen
 
 Live state is saved in `nemesis.sqlite3`. Before a player is configured, a year-long browser session cookie identifies the profile, so a different browser or cleared cookies starts a separate profile. Activating an imported player writes `.runtime/player.json`: browsers using this local installation then share that configured player's model and active game. This is a one-person application with no account interface. The original tracked `db.sqlite3` is not used by this application.
 
-Export the current game as PGN or export the saved profile as JSON. JSON includes policy weights, bounded replay, cumulative live prediction metrics, imported training metadata when present, current events and decisions, and up to 30 archived games. It is not a replacement for the complete downloaded history and offline training artifacts. Export periodically for a study.
+Export the current game as PGN or export the saved profile as JSON. JSON includes policy weights, bounded replay, cumulative live prediction metrics, imported training metadata when present, current events and decisions, up to 30 archived games, and completed coaching transcripts with model identifiers and position labels. It is not a replacement for the complete downloaded history and offline training artifacts. Export periodically for a study.
 
 The database, downloaded games, import manifests, policy caches, checkpoints and local player configuration are runtime data excluded from Git. Resetting the player model clears its learned policy, saved games and current game while keeping the configured account identity; it does not delete downloaded archives or training files under `.runtime/`.
 
@@ -126,8 +135,8 @@ python manage.py check
 python manage.py makemigrations --check --dry-run
 ```
 
-Checks cover legal neural probabilities, learning from demonstrated moves, pre-update metrics, serialization, move selection and score perspectives, cost and mate constraints, special moves, persistence, migration, and rollback on engine failure. Import checks cover validation, deduplication, chronological ordering and resumable archive handling. The optional real-engine tests require the installed engine dependencies. Run the commands above for the current test results; passing implementation checks does not establish effective personalization.
+Checks cover legal neural probabilities, learning from demonstrated moves, pre-update metrics, serialization, move selection and score perspectives, cost and mate constraints, special moves, persistence, migration, and rollback on engine failure. Import checks cover validation, deduplication, chronological ordering and resumable archive handling. Chat tests use mocked provider responses to verify context filtering, response handling, persistence and request conflicts; they do not establish live Astra access. The optional real-engine tests require the installed engine dependencies. Run the commands above for the current test results; passing implementation checks does not establish effective personalization.
 
-The active opponent is implemented in `chess_tutor/maia_policy.py`, `player_policy.py`, `opponent.py`, and `views.py`. Public history import is in `chess_tutor/chesscom_import.py`. The board interface is in `templates/chat.html`, `static/css/main.css`, and `static/js/nemesis.js`. Remaining original tutor modules are not the active opponent.
+The active opponent is implemented in `chess_tutor/maia_policy.py`, `player_policy.py`, `opponent.py`, and `views.py`. Public history import is in `chess_tutor/chesscom_import.py`; coaching is in `astra.py` and `chat_views.py`. The board and chat interface is in `templates/chat.html`, `static/css/main.css`, and `static/js/nemesis.js`. Remaining original tutor modules are not the active opponent.
 
 Stockfish, LC0, and Maia are upstream projects; NEMESIS does not claim their pretrained work as its own. Runtime downloads stay outside Git. This repository defaults to a local Django development server.

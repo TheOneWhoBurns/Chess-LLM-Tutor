@@ -240,7 +240,8 @@ def action_view(request):
 def export_view(request):
     profile = profile_for(request)
     if request.GET.get("format") == "json":
-        response = JsonResponse({"version": 2, "state": profile.state}, json_dumps_params={"indent": 2})
+        from .chat_views import transcript
+        response = JsonResponse({"version": 2, "state": profile.state, "chat": transcript(profile, limit=None)}, json_dumps_params={"indent": 2})
         response["Content-Disposition"] = 'attachment; filename="nemesis-research.json"'
         return response
     game = chess.pgn.Game.from_board(restore_board(profile.state))

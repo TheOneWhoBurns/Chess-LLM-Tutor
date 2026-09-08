@@ -55,11 +55,31 @@
         <div class="move-columns" aria-hidden="true"><span></span><span>White</span><span>Black</span></div>
         <div id="move-history" class="move-history" tabindex="0" aria-label="Game moves"><p class="empty-moves">White to move.</p></div>
       </section>
-      <div class="tabs" role="tablist" aria-label="Opponent information">
-        <button id="analysis-tab" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="analysis-panel" data-tab="analysis">Analysis</button>
+      <div class="tabs" role="tablist" aria-label="Coach and opponent information">
+        <button id="chat-tab" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="chat-panel" data-tab="chat">Chat</button>
+        <button id="analysis-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel" tabindex="-1" data-tab="analysis">Analysis</button>
         <button id="player-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="player-panel" tabindex="-1" data-tab="player">Player model</button>
       </div>
-      <section id="analysis-panel" class="tab-panel" role="tabpanel" aria-labelledby="analysis-tab">
+      <section id="chat-panel" class="tab-panel chat-panel" role="tabpanel" aria-labelledby="chat-tab">
+        <div class="chat-heading"><h2>Your coach</h2><span id="chat-model" class="chat-model">Connecting…</span></div>
+        <p id="chat-context" class="chat-context">Uses your current game and player model.</p>
+        <div id="chat-messages" class="chat-messages" role="log" aria-label="Conversation with your chess coach" aria-live="polite" aria-relevant="additions" tabindex="0">
+          <div id="chat-empty" class="chat-empty"><h3>Talk through your game.</h3><p>Ask about a mistake, NEMESIS’s last move, or what to practice next.</p></div>
+        </div>
+        <div id="chat-thinking" class="chat-thinking" role="status" hidden><span class="chat-thinking-dot" aria-hidden="true"></span><span>Reading your position…</span></div>
+        <div id="chat-error" class="chat-error" role="alert" hidden><p id="chat-error-copy"></p><button id="chat-retry" type="button">Retry</button></div>
+        <div id="chat-prompts" class="chat-prompts" aria-label="Conversation starters">
+          <button type="button" data-chat-prompt="Explain my last mistake.">My last mistake <span aria-hidden="true">↗</span></button>
+          <button type="button" data-chat-prompt="Why did NEMESIS play that move?">Why that move? <span aria-hidden="true">↗</span></button>
+          <button type="button" data-chat-prompt="Based on my games, what should I practice next?">What to practice <span aria-hidden="true">↗</span></button>
+        </div>
+        <form id="chat-form" class="chat-form">
+          <label class="visually-hidden" for="chat-input">Message your chess coach</label>
+          <textarea id="chat-input" name="message" rows="2" maxlength="4000" placeholder="Ask about your game…" aria-describedby="chat-input-hint" required></textarea>
+          <div class="chat-compose-footer"><span id="chat-input-hint">Enter to send · Shift + Enter for a new line</span><button id="chat-send" type="submit" class="button primary" disabled>Send <span aria-hidden="true">↑</span></button></div>
+        </form>
+      </section>
+      <section id="analysis-panel" class="tab-panel" role="tabpanel" aria-labelledby="analysis-tab" hidden>
         <div id="analysis-empty" class="empty-analysis"><span class="small-heading">Move selection</span><h3>Play your first move.</h3><p>NEMESIS evaluates likely replies to choose its continuation. Its reasoning will appear here after it moves.</p><div class="model-caption"><span id="model-name">Maia + personal policy</span><span>Evaluated by Stockfish</span></div></div>
         <div id="decision-detail" hidden>
           <div class="decision-head"><div><span class="small-heading">NEMESIS played</span><strong id="decision-move">—</strong></div><span id="decision-label" class="decision-label"></span></div>
