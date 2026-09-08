@@ -20,7 +20,8 @@ def activate_player(username, training_dir, config_path=None):
     model = json.loads(model_bytes)
     report = json.loads((directory / "report.json").read_text())
     summary = report["summary"]
-    if model.get("complete_dataset") is not True:
+    if model.get("complete_dataset") is not True or report.get("training_complete") is not True or \
+            model.get("purpose") != "all_selected_games_for_live_play":
         raise ValueError("Only a completed fit on the full imported dataset can be activated.")
     if any(canonical_username(value) != username for value in
            (model.get("username"), summary.get("username"))):

@@ -28,8 +28,9 @@ class DeploymentTests(TestCase):
             policy.learn(board, prior, "e2e4")
         identity = {"username": "example_player", "dataset_fingerprint": "test-dataset",
                     "policy_fingerprint": "test-prior"}
-        self.model = {**identity, "complete_dataset": True, "policy": policy.dump()}
-        self.report = {**identity, "summary": {"username": "example_player", "games_total": 2,
+        self.model = {**identity, "complete_dataset": True, "policy": policy.dump(),
+                      "purpose": "all_selected_games_for_live_play"}
+        self.report = {**identity, "training_complete": True, "summary": {"username": "example_player", "games_total": 2,
             "train_games": 1, "test_games": 1, "train_positions": 1, "test_positions": 1,
             "total_positions": 2, "prior_log_loss": 2., "personal_log_loss": 1.9,
             "prior_accuracy": 0., "personal_accuracy": 1., "trained_at": "2026-01-01T00:00:00Z"}}
@@ -98,6 +99,16 @@ class DeploymentTests(TestCase):
         with self.assertRaises(ValueError):
             self.activate()
         self.assertFalse(self.config.exists())
+        self.assertEqual(PlayerProfile.objects.count(), 0)
+
+    def test_in_progress_fit_and_evaluation_checkpoint_cannot_be_activated(self):
+        self.report['training_complete'] = False; self.write_artifacts()
+        with self.assertRaisesMessage(ValueError, 'completed fit'):
+            self.activate()
+        self.report['training_complete'] = True
+        self.model['purpose'] = 'frozen_training_80_percent'; self.write_artifacts()
+        with self.assertRaisesMessage(ValueError, 'completed fit'):
+            self.activate()
         self.assertEqual(PlayerProfile.objects.count(), 0)
 
     def test_missing_or_broken_local_configuration_does_not_break_the_app(self):
