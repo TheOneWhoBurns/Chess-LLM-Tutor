@@ -1,0 +1,73 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1b1b1a">
+  <title>NEMESIS · Practice</title>
+  <link rel="icon" href="{% static 'img/nemesis.svg' %}" type="image/svg+xml">
+  <link rel="stylesheet" href="{% static 'css/chessboard-1.0.0.min.css' %}">
+  <link rel="stylesheet" href="{% static 'css/main.css' %}">
+  <link rel="stylesheet" href="{% static 'css/practice.css' %}">
+  <script defer src="{% static 'js/jquery.min.js' %}"></script>
+  <script defer src="{% static 'js/chessboard-1.0.0.min.js' %}"></script>
+  <script defer src="{% static 'js/chess.min.js' %}"></script>
+  <script defer src="{% static 'js/practice.js' %}"></script>
+</head>
+<body class="practice-page">
+  <header class="app-header">
+    <a class="brand" href="/" aria-label="NEMESIS home"><span class="brand-symbol" aria-hidden="true">N</span>NEMESIS</a>
+    <span class="practice-header-label">PERSONAL PRACTICE</span>
+    <a class="button" href="/">Back to game <span aria-hidden="true">↗</span></a>
+  </header>
+  <main class="practice-workspace">
+    <div class="practice-intro">
+      <div><p class="eyebrow">YOUR MISTAKES, ANOTHER CHANCE</p><h1>Make the next decision better.</h1><p>Retry a position from your games. Explain your choice. Come back and check what stayed.</p></div>
+      <button id="find-lessons" class="button" type="button">Find lessons in saved games</button>
+    </div>
+    <div id="practice-error" class="practice-notice" role="alert" hidden></div>
+    <p id="practice-status" class="practice-status" role="status" aria-live="polite">Loading your practice…</p>
+    <div class="practice-layout">
+      <section class="practice-board-column" aria-label="Practice position">
+        <div class="practice-board-heading"><span id="position-color">Your next decision</span><span id="attempt-kind" class="quiet">Practice</span></div>
+        <div class="board-frame"><div id="practice-board" aria-label="Practice chess board. Drag a piece, select its source and destination, or use the move field."></div></div>
+        <div class="practice-board-footer"><button id="practice-flip" type="button" class="button">Flip board</button><span id="position-source" class="quiet">Positions from your saved games</span></div>
+        <section id="continuation" class="continuation" aria-label="Compare engine continuations" hidden>
+          <div class="continuation-controls"><label for="line-choice">Explore</label><select id="line-choice"><option value="best_line">Engine's suggestion</option><option value="original_line">Original mistake</option><option value="your_line">Your answer</option></select><button id="line-back" type="button" class="button" aria-label="Previous position">←</button><button id="line-forward" type="button" class="button" aria-label="Next position">→</button></div>
+          <p id="line-moves" class="mono"></p><p id="line-position" class="quiet" aria-live="polite"></p>
+        </section>
+      </section>
+      <aside class="practice-panel" aria-label="Lesson and progress">
+        <div class="practice-stats"><div><strong id="due-count">—</strong><span>ready today</span></div><div><strong id="lesson-count">—</strong><span>saved lessons</span></div><div><strong id="retention-count">—</strong><span>delayed, unaided</span></div></div>
+        <section id="practice-empty" class="practice-empty">
+          <span class="eyebrow">A SHORT SESSION</span><h2 id="empty-title">Start with a real decision.</h2><p id="empty-copy">Find lessons from mistakes in your saved local games. Each position gets a fresh engine check before it enters your practice queue.</p>
+          <button id="start-practice" class="button primary" type="button" disabled>Start practice</button>
+        </section>
+        <section id="lesson-active" hidden>
+          <p class="eyebrow">PAUSE. LOOK. CHOOSE.</p><h2>What would you play?</h2><p class="practice-prompt">Look for the opponent’s strongest reply. A sound alternative also counts.</p>
+          <form id="practice-form">
+            <label for="practice-move">Your move</label>
+            <div class="practice-move-row"><input id="practice-move" maxlength="16" placeholder="e4, Nf3, O-O" autocomplete="off" autocapitalize="off" spellcheck="false" required><label class="visually-hidden" for="practice-promotion">Promotion piece</label><select id="practice-promotion" aria-label="Promotion piece"><option value="q">Queen</option><option value="r">Rook</option><option value="b">Bishop</option><option value="n">Knight</option></select></div>
+            <label for="practice-reason">What do you expect next? <span class="quiet">Optional</span></label>
+            <textarea id="practice-reason" rows="3" maxlength="2000" placeholder="My idea is… Their strongest reply is…"></textarea>
+            <button id="check-answer" class="button primary" type="submit">Check my move <span aria-hidden="true">↗</span></button>
+            {% csrf_token %}
+          </form>
+          <div id="practice-hints" class="practice-hints" aria-live="polite" hidden></div>
+          <div class="practice-help"><button id="get-hint" class="button" type="button">Give me a hint</button><button id="reveal-answer" class="text-button" type="button">Show answer</button></div>
+          <p class="practice-footnote">Hints mark this attempt as assisted. Your live game and move model stay separate.</p>
+        </section>
+        <section id="lesson-result" hidden aria-live="polite">
+          <p id="result-label" class="eyebrow"></p><h2 id="result-title"></h2><p id="result-copy"></p>
+          <div class="practice-comparison"><div><span>In your game</span><strong id="original-move"></strong></div><div><span>Sound choices</span><strong id="sound-moves"></strong></div></div>
+          <p id="result-reason" class="result-reason" hidden></p><p class="practice-prompt">Compare the continuations on the board. Notice what the opponent can do after each choice.</p>
+          <p id="next-review" class="next-review"></p><button id="next-lesson" class="button primary" type="button">Next lesson</button>
+          <p id="engine-evidence" class="practice-footnote"></p>
+        </section>
+        <footer class="practice-panel-footer"><p>Delayed checks repeat a position you have seen. They measure retention, not improvement on unfamiliar positions.</p><a href="/api/export/?format=json">Export practice and game data ↗</a></footer>
+      </aside>
+    </div>
+  </main>
+</body>
+</html>

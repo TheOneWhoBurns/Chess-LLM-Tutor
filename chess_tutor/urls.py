@@ -17,11 +17,13 @@ Including another URLconf
 
 from django.contrib import admin
 from django.urls import path
-from . import chat_views, views
+from . import chat_views, practice_views, views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('', views.chat_view, name='chat'),
+    path('practice/', practice_views.practice_page, name='practice'),
+    path('api/practice/', practice_views.practice_api, name='practice_api'),
     path('api/state/', views.state_view, name='state'),
     path('api/action/', views.action_view, name='action'),
     path('api/export/', views.export_view, name='export'),

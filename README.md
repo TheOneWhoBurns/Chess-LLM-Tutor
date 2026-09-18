@@ -33,6 +33,71 @@ Optional runtime settings:
 
 Both chess engines run locally and stay loaded between moves. Chess play and personal-model training need no API key or remote inference service. Missing engines, incomplete policy output, or failed analysis return an error without saving a partial move or training update. See [the Maia runtime notes](docs/MAIA_RUNTIME.md) for inference settings, download provenance, and attribution.
 
+## Practice your mistakes
+
+Run `python manage.py migrate` after updating, then choose **Practice** in the
+game header (or open `/practice/`). **Find lessons in saved games** checks
+recorded mistakes from the current game and the saved local archive. Each click
+examines at most eight unchecked candidate positions and adds at most three
+lessons, starting with the largest recorded losses in the most recent game.
+Positions rejected by the new analysis are remembered so they cannot block
+later candidates. No lesson is manufactured when no mistake is confirmed.
+
+To start with your already downloaded Chess.com history, activate your player
+as described below, then run:
+
+```sh
+python manage.py extract_practice --username YOUR_USERNAME --games 5
+```
+
+This command reads and verifies the existing completed archive cache without
+network access. It checks your own moves in the most recent games, including
+games played as Black, and adds up to three new lessons per game per run.
+`--games` accepts 1–20; `--cache-dir` can select an existing players directory.
+Reruns skip previously checked positions. Successfully extracted lessons remain
+available if a later game fails; rerun to continue. Stockfish is required for
+extraction; Maia and an API key are not required for practice.
+
+For an imported position, a 120,000-node search screens all legal moves.
+Recorded local mistakes already supply that screening estimate. A new
+600,000-node search over all legal moves must confirm a loss of at least 100cp.
+The full source move history is supplied to both searches. Lessons accept moves
+within 35cp of the confirmed best move. When that best move forces mate, other
+forced winning mates are accepted; moves that concede a forced mate are not.
+Already forced losing positions are excluded. These are finite-search estimates,
+not proofs that a move is objectively best or a recurring weakness exists.
+
+In a lesson, select a piece and destination, drag, or type SAN/UCI. Choose a
+promotion piece when promotion is available. Optionally record what you expect
+next, then check the move. The first legal submitted answer ends the attempt;
+illegal input does not count. Two progressive hints identify a candidate piece
+and destination. **Show answer** ends the attempt without success. Afterward,
+compare up to eight half-moves of the engine's suggestion, your original mistake,
+and your submitted answer using the board's replay controls. Explanations you
+write are saved for reflection and are not automatically graded.
+
+Unaided correct answers schedule the same position after 1, 3, 7, 14, then 30
+days. Later successes retain the 30-day interval. A wrong, revealed, or assisted
+answer resets the interval to one day. The schedule is an initial product
+heuristic, not an experimentally optimized interval. Refreshing resumes the
+attempt or its completed feedback. A stale tab cannot erase hint use or count
+the same answer twice, and early attempts cannot advance the schedule.
+
+**Delayed, unaided** shows successful hint-free delayed checks divided by all
+completed delayed checks. First retries are excluded. These checks repeat a
+seen position and measure retention; they do not establish transfer to unfamiliar
+positions, improvement in ordinary games, or superiority of personalized
+practice. Attempt duration is elapsed wall time and can include time away.
+
+Practice is saved separately from the live board, its revision, and the personal
+move model. It does not train the move predictor. JSON exports include the
+lesson's source position and history, engine evidence, attempts, hints,
+explanations, and schedule. **Reset player model** also clears practice records.
+This first release provides extraction, retries, continuation replay, and
+delayed retention checks. Automatic weakness diagnosis, independently graded
+unfamiliar-position assessments, and a teaching-directed opponent remain future
+experiments.
+
 ## Astra chat
 
 Open **Chat** beside the board to ask about your last mistake, NEMESIS's decision, or what to practice. Set `OPENAI_API_KEY` in the Django server's environment and restart the server to enable it. `.env.example` documents the settings; `.env` files are not loaded automatically. The key stays on the server. Configuration detection does not verify account access: an invalid key, unavailable model, or exhausted quota produces an explicit chat error, with no substitute model. The local opponent remains usable without chat.
