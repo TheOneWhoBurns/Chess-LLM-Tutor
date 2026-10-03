@@ -334,6 +334,69 @@ svg {
   background:none;
   border:4px solid #24332a66
 }
+.legal-capture:after {
+  left:4%;
+  top:4%;
+  width:92%;
+  height:92%;
+  background:none;
+  border:4px solid #24332a99
+}
+#board [data-square]:focus-visible {
+  outline:3px solid #e4c074;
+  outline-offset:-4px;
+  z-index:2
+}
+#board [data-square] { cursor:pointer }
+.board-navigation {
+  display:flex;
+  align-items:center;
+  gap:4px;
+  min-height:36px;
+  border-top:1px solid var(--line);
+  border-bottom:1px solid var(--line)
+}
+.board-navigation>span {
+  flex:1;
+  color:var(--muted);
+  font-size:11px
+}
+.board-navigation button {
+  background:transparent;
+  border:0;
+  border-radius:3px;
+  min-width:34px;
+  min-height:32px;
+  font-size:20px;
+  line-height:1
+}
+.board-navigation #history-first { font-size:14px }
+.board-navigation #history-live { font-size:11px; padding:0 9px }
+.board-navigation button:hover:not(:disabled) { background:var(--raised) }
+.reviewing .board-navigation>span,.reviewing #history-live { color:var(--accent) }
+.board-feedback {
+  color:var(--muted);
+  font-size:10px;
+  min-height:26px;
+  padding-top:8px
+}
+.review-notice {
+  padding:10px 18px;
+  font-size:11px;
+  color:#d8bd8f;
+  background:var(--accent-bg);
+  border-top:1px solid var(--line)
+}
+#position-fen {
+  width:100%;
+  margin-top:16px;
+  padding:10px;
+  resize:none;
+  color:var(--text);
+  background:var(--background);
+  border:1px solid var(--line);
+  font:12px/1.6 var(--mono)
+}
 .check-square {
   background-image:radial-gradient(ellipse,#b85035bb 8%,#b8503522 68%,transparent 75%)!important
 }
@@ -488,11 +551,19 @@ svg {
   font:11px var(--mono);
   color:#74766b
 }
-.move-pair>span {
+.move-pair>span,.move-pair>button {
   padding:6px 8px;
   margin-left:-8px;
   line-height:1.2
 }
+.move-pair>button {
+  border:0;
+  background:none;
+  text-align:left;
+  width:100%;
+  font:inherit
+}
+.move-pair>button:hover:not(:disabled) { background:#ffffff0c }
 .move-pair .current-move {
   background:#c2a16c1a;
   color:#d8bd8f;
@@ -1261,7 +1332,7 @@ dialog legend {
     margin-bottom:0
   }
   .board-toolbar {
-    gap:22px
+    gap:12px
   }
   .opponent-row {
     height:43px

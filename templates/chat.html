@@ -28,14 +28,23 @@
         <div class="player-identity"><span class="piece-marker black-piece" aria-hidden="true">♟</span><div><h1>NEMESIS</h1><p id="opponent-status">Loading opponent</p></div></div>
         <button id="mode-label" class="mode-label" aria-label="Game mode. Open new game options" disabled>Adaptive</button>
       </div>
-      <div class="board-frame"><div id="board" aria-label="Chess board. Select a piece and its destination, drag a piece, or enter a move below."></div></div>
+      <div class="board-frame"><div id="board" role="group" aria-label="Chess board" aria-describedby="board-help"></div></div>
+      <p id="board-help" class="visually-hidden">Use arrow keys to choose a square, Enter or Space to select and move, and Escape to cancel. You can also drag pieces or type a move below.</p>
       <div class="player-row human-row">
         <div class="player-identity"><span class="piece-marker white-piece" aria-hidden="true">♙</span><div><strong id="player-name">You</strong><p id="turn-status" role="status" aria-live="polite">Loading your position…</p></div></div>
         <span id="game-result" class="game-result" hidden></span>
         <span class="thinking-indicator" aria-hidden="true"><i></i><i></i><i></i></span>
       </div>
+      <div class="board-navigation" role="group" aria-label="Browse game positions">
+        <span id="position-label" role="status" aria-live="polite">Current position</span>
+        <button id="history-first" type="button" aria-label="Starting position" title="Starting position (Home)" disabled>⏮</button>
+        <button id="history-previous" type="button" aria-label="Previous move" title="Previous move (Left arrow)" disabled>‹</button>
+        <button id="history-next" type="button" aria-label="Next move" title="Next move (Right arrow)" disabled>›</button>
+        <button id="history-live" type="button" title="Return to current position (End)" disabled>Live</button>
+      </div>
       <div class="board-toolbar">
-        <button id="flip-board" type="button" title="Flip board"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M6 3v13m-3-3 3 3 3-3m5 4V4m-3 3 3-3 3 3"/></svg><span>Flip</span></button>
+        <button id="flip-board" type="button" title="Flip board (F)" aria-pressed="false"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M6 3v13m-3-3 3 3 3-3m5 4V4m-3 3 3-3 3 3"/></svg><span>Flip</span></button>
+        <button id="copy-fen" type="button" title="Copy the displayed position as FEN" disabled><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M7 6h9v11H7zM4 14H3V3h9v1"/></svg><span>Copy FEN</span></button>
         <a href="/api/export/" title="Download this game as PGN"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 3v10m-4-4 4 4 4-4M4 13v4h12v-4"/></svg><span>PGN</span></a>
         <span class="toolbar-space"></span>
         <button id="claim-draw" type="button" disabled><span class="draw-icon" aria-hidden="true">½</span><span>Claim draw</span></button>
@@ -47,6 +56,7 @@
         <button type="submit" class="button" disabled>Play <span aria-hidden="true">↵</span></button>
         {% csrf_token %}
       </form>
+      <p id="board-feedback" class="board-feedback" role="status" aria-live="polite">Select a piece to see legal moves · F to flip</p>
     </section>
 
     <aside class="side-pane" aria-label="Game information">
@@ -55,6 +65,7 @@
         <div class="move-columns" aria-hidden="true"><span></span><span>White</span><span>Black</span></div>
         <div id="move-history" class="move-history" tabindex="0" aria-label="Game moves"><p class="empty-moves">White to move.</p></div>
       </section>
+      <p id="review-notice" class="review-notice" hidden>You’re viewing an earlier position. Analysis follows the current game; return to Live to chat or play.</p>
       <div class="tabs" role="tablist" aria-label="Coach and opponent information">
         <button id="chat-tab" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="chat-panel" data-tab="chat">Chat</button>
         <button id="analysis-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel" tabindex="-1" data-tab="analysis">Analysis</button>
@@ -119,7 +130,8 @@
   </main>
 
   <dialog id="new-game-dialog" aria-labelledby="new-game-title"><form method="dialog"><h2 id="new-game-title">New game</h2><p>Your current game is archived. Your player model carries over.</p><fieldset><legend>Opponent</legend><label class="mode-choice"><input type="radio" name="mode" value="adaptive" checked><span><strong>NEMESIS <span class="choice-tag">Adaptive</span></strong><small>Uses Maia and your observed moves to predict replies. Chooses among sound moves evaluated by Stockfish.</small></span></label><label class="mode-choice"><input type="radio" name="mode" value="baseline"><span><strong>Stockfish <span class="choice-tag">Baseline</span></strong><small>Plays the engine’s best move. The player model still learns, so you can compare the two modes.</small></span></label></fieldset><p class="dialog-note">You play white. No clock.</p><div class="dialog-actions"><button class="button" value="cancel">Cancel</button><button id="confirm-new-game" type="button" class="button primary">Start game</button></div></form></dialog>
-  <dialog id="promotion-dialog" aria-labelledby="promotion-title"><h2 id="promotion-title">Promote pawn</h2><p>Choose a piece.</p><div class="promotion-options"><button type="button" data-promotion="q"><span aria-hidden="true">♕</span>Queen</button><button type="button" data-promotion="r"><span aria-hidden="true">♖</span>Rook</button><button type="button" data-promotion="b"><span aria-hidden="true">♗</span>Bishop</button><button type="button" data-promotion="n"><span aria-hidden="true">♘</span>Knight</button></div></dialog>
+  <dialog id="promotion-dialog" aria-labelledby="promotion-title"><h2 id="promotion-title">Promote pawn</h2><p>Choose a piece.</p><div class="promotion-options"><button type="button" data-promotion="q"><span aria-hidden="true">♕</span>Queen</button><button type="button" data-promotion="r"><span aria-hidden="true">♖</span>Rook</button><button type="button" data-promotion="b"><span aria-hidden="true">♗</span>Bishop</button><button type="button" data-promotion="n"><span aria-hidden="true">♘</span>Knight</button></div><div class="dialog-actions"><button id="cancel-promotion" class="button" type="button">Cancel</button></div></dialog>
+  <dialog id="copy-position-dialog" aria-labelledby="copy-position-title"><h2 id="copy-position-title">Copy position</h2><p>Copy this FEN to use the displayed position in another chess tool.</p><textarea id="position-fen" readonly rows="4" aria-label="Position FEN"></textarea><form method="dialog" class="dialog-actions"><button class="button primary">Close</button></form></dialog>
   <dialog id="confirm-dialog" aria-labelledby="confirm-title"><h2 id="confirm-title"></h2><p id="confirm-copy"></p><div class="dialog-actions"><button id="confirm-cancel" class="button" type="button">Cancel</button><button id="confirm-action" class="button primary" type="button">Confirm</button></div></dialog>
 </body>
 </html>

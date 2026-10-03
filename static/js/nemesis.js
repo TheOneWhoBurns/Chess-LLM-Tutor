@@ -4,7 +4,9 @@
   const byId = id => document.getElementById(id);
   const pieceNames = {p:'pawn', n:'knight', b:'bishop', r:'rook', q:'queen', k:'king'};
   let state = null, board = null, busy = false, connected = false, selected = null;
-  let pendingPromotion = null, confirmation = null, lastDrag = 0, retryTimer = null;
+  let pendingPromotion = null, confirmation = null, lastDrop = null, retryTimer = null;
+  let reviewPly = null, pendingMove = null, keyboardSquare = 'e2', beforeDragSelection = null;
+  let feedbackTimer;
   let chat = {messages:[], ready:false, model:null};
   let chatLoading = true, chatLoadActive = false, chatBusy = false, chatFailure = '', chatRetryMode = 'load';
   let pendingChat = null, renderedChat = null;
@@ -21,7 +23,26 @@
   const put = (id, value) => {byId(id).textContent = value;};
   const legalMoves = () => Array.isArray(state?.legal_moves) ? state.legal_moves : [];
   const available = () => !!state && connected && state.ready === true && !state.engine_error;
-  const canPlay = () => available() && !busy && !state.game_over && state.turn !== 'black' && !pendingPromotion;
+  const reviewing = () => reviewPly !== null;
+  const canPlay = () => available() && !busy && !reviewing() && !state.game_over && state.turn !== 'black' && !pendingPromotion;
+  const displayedPosition = () => pendingMove || (reviewing() ? state?.timeline?.[reviewPly] : null) || state;
+  const currentPly = () => reviewPly ?? state?.moves?.length ?? 0;
+
+  function acceptState(next) {
+    if (!state || state.revision !== next.revision) reviewPly = null;
+    state = next;
+    pendingMove = null;
+  }
+
+  function boardFeedback(message, temporary = false) {
+    clearTimeout(feedbackTimer);
+    put('board-feedback', message);
+    if (temporary) feedbackTimer = setTimeout(() => boardFeedback(defaultBoardHelp()), 3500);
+  }
+
+  function defaultBoardHelp() {
+    return reviewing() ? 'Browse with ← → · End returns to the current position' : 'Select a piece to see legal moves · F to flip';
+  }
 
   function notice(message, reconnect = false) {
     put('notice-copy', message || '');
@@ -34,6 +55,7 @@
     document.body.classList.toggle('busy', value);
     byId('board').setAttribute('aria-busy', String(value));
     renderStatus();
+    renderNavigation();
   }
 
   function renderStatus() {
@@ -46,8 +68,9 @@
     const locked = busy || !ready;
     ['new-game', 'mode-label'].forEach(id => {byId(id).disabled = locked;});
     byId('forget-profile').disabled = busy || !state;
-    ['move-input', 'resign', 'claim-draw'].forEach(id => {byId(id).disabled = locked || !!state?.game_over;});
-    byId('move-form').querySelector('button').disabled = locked || !!state?.game_over;
+    ['resign', 'claim-draw'].forEach(id => {byId(id).disabled = locked || reviewing() || !!state?.game_over;});
+    byId('move-input').disabled = !canPlay();
+    byId('move-form').querySelector('button').disabled = !canPlay();
     if (!state) {
       put('turn-status', busy ? 'Loading your position…' : 'Connect to load your game');
       put('opponent-status', busy ? 'Connecting to engine' : 'Engine unavailable');
@@ -72,7 +95,11 @@
       put('opponent-status', state.game_over ? 'Game complete' : state.mode === 'baseline' ? 'Stockfish · Best move' : samples ? 'Maia + your personal policy' : 'Maia 1500 · No personal history');
       put('model-status', state.mode === 'baseline' ? 'Baseline · Model still learning' : state.profile?.training ? `History fitted · ${count(liveSamples)} live choices` : samples ? `${count(samples)} observed move${samples === 1 ? '' : 's'}` : 'Maia prior · 0 observed moves');
     }
-    byId('game-result').hidden = !state.game_over;
+    if (reviewing()) {
+      put('turn-status', `Reviewing · ${reviewPly === 0 ? 'Starting position' : moveLabel(reviewPly)}`);
+      put('opponent-status', 'Game history');
+    }
+    byId('game-result').hidden = !state.game_over || reviewing();
     put('game-result', state.result === '*' ? '' : state.result || '');
   }
 
@@ -85,19 +112,19 @@
   }
 
   function renderChatControls() {
-    const canSend = chat.ready && !chatLoading && !chatBusy && !busy && !!state && connected;
+    const canSend = chat.ready && !chatLoading && !chatBusy && !busy && !reviewing() && !!state && connected;
     byId('chat-input').disabled = chatBusy;
     byId('chat-send').disabled = !canSend || !byId('chat-input').value.trim();
     byId('chat-form').setAttribute('aria-busy', String(chatBusy));
     byId('chat-thinking').hidden = !chatBusy;
-    byId('chat-retry').disabled = chatLoading || chatBusy || busy;
+    byId('chat-retry').disabled = chatLoading || chatBusy || busy || reviewing();
     document.querySelectorAll('[data-chat-prompt]').forEach(button => {button.disabled = chatBusy;});
     byId('chat-model').classList.toggle('ready', chat.ready && !chatLoading && !chatFailure);
     put('chat-model', chatLoading ? 'Connecting…' : !chat.ready ? `${coachName()} · Unavailable` : chatFailure ? `${coachName()} · Check connection` : coachName());
     byId('chat-model').title = chat.model || 'Connecting to the configured coaching model';
     if (state) {
       const move = Math.floor((state.moves?.length || 0) / 2) + 1;
-      put('chat-context', `Game ${state.profile?.games || 1} · ${state.game_over ? 'Game complete' : `Move ${move} · ${state.turn === 'black' ? 'Black' : 'White'} to move`}`);
+      put('chat-context', reviewing() ? 'Return to Live to ask about your current game.' : `Game ${state.profile?.games || 1} · ${state.game_over ? 'Game complete' : `Move ${move} · ${state.turn === 'black' ? 'Black' : 'White'} to move`}`);
     }
     const error = chatFailure || (!chatLoading && !chat.ready ? 'The coaching connection is unavailable.' : '');
     byId('chat-error').hidden = !error;
@@ -161,7 +188,7 @@
 
   async function sendChat(retry = false) {
     const message = retry && pendingChat ? pendingChat.message : byId('chat-input').value.trim();
-    if (!message || !chat.ready || chatLoading || chatBusy || busy || !state || !connected) return;
+    if (!message || !chat.ready || chatLoading || chatBusy || busy || reviewing() || !state || !connected) return;
     if (!pendingChat || pendingChat.message !== message) {
       pendingChat = {message, revision:state.revision, request_id:crypto.randomUUID()};
     }
@@ -215,8 +242,8 @@
   async function loadState() {
     const response = await fetch('/api/state/', {cache:'no-store', signal:AbortSignal.timeout(120000)});
     const result = await readResponse(response);
-    if (result.state) state = result.state;
-    else if (result.fen) state = result;
+    if (result.state) acceptState(result.state);
+    else if (result.fen) acceptState(result);
     connected = true;
     if (state) render();
     if (!response.ok) throw new Error(result.error || 'The engine is not available yet. Reconnect when it is ready.');
@@ -236,12 +263,19 @@
     finally {setBusy(false);}
   }
 
-  async function act(action, extra = {}) {
+  async function act(action, extra = {}, fromDrag = false) {
     if (busy || !state || (action !== 'forget' && !available())) return;
     const restoreMoveFocus = action === 'move' && byId('move-form').contains(document.activeElement);
     notice('');
     selected = null;
+    reviewPly = null;
+    if (action === 'move') {
+      const text = (extra.move || '').trim().replaceAll('0-0', 'O-O');
+      pendingMove = state.legal_positions?.[text.replaceAll('-', '')] || Object.values(state.legal_positions || {}).find(position => position.san === text) || null;
+    }
     setBusy(true);
+    boardFeedback(action === 'move' ? 'Move submitted · NEMESIS is thinking…' : 'Updating your game…');
+    if (!fromDrag) renderBoard();
     highlightSquares();
     try {
       const response = await fetch('/api/action/', {
@@ -250,11 +284,11 @@
       });
       const result = await readResponse(response);
       if (!response.ok) {
-        if (result.state) {state = result.state; render();}
+        if (result.state) {acceptState(result.state); render();}
         throw new Error(result.error || `The move could not be saved (${response.status}).`);
       }
       if (!result.fen) throw new Error('The server did not return the updated position.');
-      state = result;
+      acceptState(result);
       connected = true;
       render();
       if (action === 'move') byId('move-input').value = '';
@@ -265,33 +299,108 @@
       try {await loadState(); if (available()) notice(message);}
       catch (_) {connected = false; notice(`${message} Reconnect to check your saved position.`, true);}
     } finally {
+      pendingMove = null;
       setBusy(false);
+      renderBoard();
       highlightSquares();
+      boardFeedback(defaultBoardHelp());
       if (restoreMoveFocus && canPlay()) byId('move-input').focus({preventScroll:true});
     }
   }
 
-  function play(from, to) {
-    if (!canPlay()) return;
+  function play(from, to, fromDrag = false) {
+    if (!canPlay()) return false;
     const moves = legalMoves().filter(move => move.startsWith(from + to));
-    if (!moves.length) return;
+    if (!moves.length) return false;
     if (moves.some(move => move.length === 5)) {
       pendingPromotion = from + to;
       byId('promotion-dialog').showModal();
-    } else act('move', {move:moves[0]});
+      renderStatus();
+      renderNavigation();
+      return false;
+    }
+    act('move', {move:moves[0]}, fromDrag);
+    return true;
   }
 
   function highlightSquares() {
+    const position = displayedPosition();
+    const pieces = board?.position() || {};
+    const destinations = new Set(selected && canPlay() ? legalMoves().filter(move => move.startsWith(selected)).map(move => move.slice(2, 4)) : []);
     document.querySelectorAll('#board [data-square]').forEach(square => {
       const name = square.dataset.square;
-      square.classList.remove('last-square', 'selected-square', 'legal-square', 'check-square');
-      if (typeof state?.last_move === 'string' && [state.last_move.slice(0, 2), state.last_move.slice(2, 4)].includes(name)) square.classList.add('last-square');
+      square.classList.remove('last-square', 'selected-square', 'legal-square', 'legal-capture', 'check-square');
+      if (typeof position?.last_move === 'string' && [position.last_move.slice(0, 2), position.last_move.slice(2, 4)].includes(name)) square.classList.add('last-square');
       if (selected === name) square.classList.add('selected-square');
-      if (selected && legalMoves().some(move => move.startsWith(selected + name))) square.classList.add('legal-square');
-      const code = square.querySelector('img')?.getAttribute('data-piece');
-      if (state?.in_check && code === (state.turn === 'black' ? 'bK' : 'wK')) square.classList.add('check-square');
-      square.setAttribute('aria-label', name + (code ? ` ${code[0] === 'w' ? 'white' : 'black'} ${pieceNames[code[1].toLowerCase()]}` : ' empty'));
+      const code = pieces[name];
+      if (destinations.has(name)) {
+        square.classList.add('legal-square');
+        // A pawn's diagonal legal move is a capture, including en passant.
+        if (code || (pieces[selected]?.endsWith('P') && selected[0] !== name[0])) square.classList.add('legal-capture');
+      }
+      if (position?.in_check && code === (position.fen.split(' ')[1] === 'b' ? 'bK' : 'wK')) square.classList.add('check-square');
+      square.setAttribute('role', 'button');
+      square.setAttribute('aria-pressed', String(selected === name));
+      square.tabIndex = keyboardSquare === name ? 0 : -1;
+      square.setAttribute('aria-label', name + (code ? ` ${code[0] === 'w' ? 'white' : 'black'} ${pieceNames[code[1].toLowerCase()]}` : ' empty') + (destinations.has(name) ? square.classList.contains('legal-capture') ? ', legal capture' : ', legal destination' : ''));
     });
+  }
+
+  function moveLabel(ply) {
+    return `${Math.ceil(ply / 2)}${ply % 2 ? '.' : '…'} ${state.moves[ply - 1]}`;
+  }
+
+  function renderNavigation() {
+    const total = state?.moves?.length || 0;
+    const valid = Array.isArray(state?.timeline) && state.timeline.length === total + 1;
+    const locked = busy || !!pendingPromotion || !valid;
+    byId('move-history').querySelectorAll('[data-ply]').forEach(button => {button.disabled = locked;});
+    ['history-first', 'history-previous'].forEach(id => {byId(id).disabled = locked || currentPly() === 0;});
+    ['history-next', 'history-live'].forEach(id => {byId(id).disabled = locked || !reviewing();});
+    byId('copy-fen').disabled = busy || !!pendingPromotion || !state;
+    byId('flip-board').disabled = busy || !!pendingPromotion;
+    document.querySelector('.game-column').classList.toggle('reviewing', reviewing());
+    byId('review-notice').hidden = !reviewing();
+    put('position-label', reviewing() ? reviewPly ? moveLabel(reviewPly) : 'Starting position' : 'Current position');
+  }
+
+  function renderBoard() {
+    const position = displayedPosition();
+    if (position?.fen) board.position(position.fen, false);
+    highlightSquares();
+  }
+
+  function reviewPosition(ply) {
+    if (busy || pendingPromotion || !state?.timeline?.length) return;
+    const end = state.moves.length;
+    const target = Math.max(0, Math.min(end, ply));
+    reviewPly = target === end ? null : target;
+    selected = null;
+    renderBoard();
+    renderStatus();
+    renderNavigation();
+    renderMoves();
+    boardFeedback(defaultBoardHelp());
+  }
+
+  function selectSquare(square) {
+    if (!canPlay()) return;
+    keyboardSquare = square;
+    if (selected && legalMoves().some(move => move.startsWith(selected + square))) {
+      play(selected, square);
+      selected = null;
+    } else {
+      const wasSelected = selected;
+      selected = selected === square ? null : legalMoves().some(move => move.startsWith(square)) ? square : null;
+      boardFeedback(selected ? `Selected ${selected} · Choose a highlighted square · Escape to cancel` : wasSelected && wasSelected !== square ? 'That move is not legal. Select a piece to try again.' : defaultBoardHelp());
+    }
+    highlightSquares();
+  }
+
+  function focusSquare(square) {
+    keyboardSquare = square;
+    highlightSquares();
+    byId('board').querySelector(`[data-square="${square}"]`)?.focus({preventScroll:true});
   }
 
   function table(headers, rows, className = '') {
@@ -315,17 +424,32 @@
     const history = byId('move-history');
     const moves = state.moves || [];
     const nearBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 45;
+    const focusedPly = history.contains(document.activeElement) ? document.activeElement.dataset.ply : null;
     history.replaceChildren();
     put('move-count', `Game ${state.profile?.games || 1}`);
     for (let index = 0; index < moves.length; index += 2) {
       const pair = node('div', 'move-pair');
       pair.append(node('small', '', `${index / 2 + 1}.`));
-      pair.append(node('span', index === moves.length - 1 ? 'current-move' : '', moves[index]));
-      pair.append(node('span', index + 1 === moves.length - 1 ? 'current-move' : '', moves[index + 1] || ''));
+      for (const moveIndex of [index, index + 1]) {
+        if (moveIndex >= moves.length) {pair.append(node('span')); continue;}
+        const ply = moveIndex + 1;
+        const move = node('button', ply === currentPly() ? 'current-move' : '', moves[moveIndex]);
+        move.type = 'button';
+        move.dataset.ply = ply;
+        move.setAttribute('aria-label', `View position after ${moveLabel(ply)}`);
+        if (ply === currentPly()) move.setAttribute('aria-current', 'step');
+        move.disabled = busy || !!pendingPromotion;
+        pair.append(move);
+      }
       history.append(pair);
     }
     if (!moves.length) history.append(node('p', 'empty-moves', 'White to move.'));
-    if (nearBottom || busy) history.scrollTop = history.scrollHeight;
+    if (focusedPly) history.querySelector(`[data-ply="${focusedPly}"]`)?.focus({preventScroll:true});
+    if (reviewing()) {
+      const current = history.querySelector('[aria-current]');
+      if (current) history.scrollTop = current.parentElement.offsetTop - history.offsetTop - history.clientHeight / 2 + current.clientHeight / 2;
+      else history.scrollTop = 0;
+    } else if (nearBottom || busy) history.scrollTop = history.scrollHeight;
   }
 
   function renderDecision() {
@@ -451,12 +575,50 @@
 
   function render() {
     if (!state?.fen) return;
-    board.position(state.fen, false);
+    renderBoard();
     renderStatus();
     renderMoves();
+    renderNavigation();
     renderDecision();
     renderProfile();
     highlightSquares();
+  }
+
+  function syncOrientation() {
+    const flipped = board.orientation() === 'black';
+    const frame = document.querySelector('.board-frame');
+    const opponent = document.querySelector('.opponent-row');
+    const human = document.querySelector('.human-row');
+    document.querySelector('.game-column').classList.toggle('flipped', flipped);
+    frame.insertAdjacentElement('beforebegin', flipped ? human : opponent);
+    frame.insertAdjacentElement('afterend', flipped ? opponent : human);
+    byId('flip-board').setAttribute('aria-pressed', String(flipped));
+    highlightSquares();
+  }
+
+  function flipBoard() {
+    if (busy || pendingPromotion) return;
+    const hadBoardFocus = byId('board').contains(document.activeElement);
+    board.flip();
+    selected = null;
+    syncOrientation();
+    try {localStorage.setItem('nemesis.board.orientation', board.orientation());} catch (_) { /* Play remains available if storage is restricted. */ }
+    if (hadBoardFocus) focusSquare(keyboardSquare);
+    boardFeedback(`${board.orientation() === 'black' ? 'Black' : 'White'} at the bottom`, true);
+  }
+
+  async function copyPosition() {
+    if (!state || busy || pendingPromotion) return;
+    const fen = displayedPosition().fen;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(fen);
+      boardFeedback('Position copied as FEN.', true);
+    } catch (_) {
+      byId('position-fen').value = fen;
+      byId('copy-position-dialog').showModal();
+      byId('position-fen').select();
+    }
   }
 
   function openNewGame() {
@@ -485,27 +647,76 @@
     if (name === 'chat') renderChat(true);
   }
 
+  let savedOrientation = 'white';
+  try {if (localStorage.getItem('nemesis.board.orientation') === 'black') savedOrientation = 'black';} catch (_) { /* Default orientation. */ }
   board = Chessboard('board', {
     position:'start', draggable:true, pieceTheme:'/static/img/chesspieces/wikipedia/{piece}.png',
-    moveSpeed:140, snapbackSpeed:100,
-    onDragStart:(_, piece) => canPlay() && piece.startsWith('w'),
+    orientation:savedOrientation, moveSpeed:140, snapbackSpeed:100,
+    onDragStart:(from, piece) => {
+      if (!canPlay() || !piece.startsWith('w') || !legalMoves().some(move => move.startsWith(from))) return false;
+      beforeDragSelection = selected;
+      selected = from;
+      keyboardSquare = from;
+      highlightSquares();
+      boardFeedback(`Selected ${from} · Drop on a highlighted square`);
+      return true;
+    },
     onDrop:(from, to) => {
-      lastDrag = Date.now();
-      if (from === to) selected = selected === from ? null : from;
-      else {selected = null; if (to !== 'offboard') play(from, to);}
+      lastDrop = {square:to, at:Date.now()};
+      if (from === to) {
+        selected = beforeDragSelection === from ? null : from;
+        boardFeedback(selected ? `Selected ${selected} · Choose a highlighted square · Escape to cancel` : defaultBoardHelp());
+      } else {
+        selected = null;
+        if (to !== 'offboard' && play(from, to, true)) return;
+        if (!pendingPromotion) boardFeedback(to === 'offboard' ? 'Move canceled.' : 'That move is not legal. Try a highlighted square.', true);
+      }
       highlightSquares();
       return 'snapback';
     },
-    onSnapbackEnd:() => {if (state) board.position(state.fen, false); highlightSquares();}
+    onSnapEnd:renderBoard,
+    onSnapbackEnd:renderBoard
   });
+  syncOrientation();
+  // Let the board own touch selection on movable pieces. Without this, a tap
+  // can also emit mouse events and toggle the same selection a second time.
+  byId('board').addEventListener('touchstart', event => {
+    const square = event.target.closest('[data-square]')?.dataset.square;
+    if (event.cancelable && canPlay() && square && legalMoves().some(move => move.startsWith(square))) event.preventDefault();
+  }, {passive:false, capture:true});
   byId('board').addEventListener('click', event => {
-    if (!canPlay() || Date.now() - lastDrag < 180) return;
     const square = event.target.closest('[data-square]')?.dataset.square;
     if (!square) return;
-    if (selected && legalMoves().some(move => move.startsWith(selected + square))) {play(selected, square); selected = null;}
-    else selected = selected === square ? null : legalMoves().some(move => move.startsWith(square)) ? square : null;
-    highlightSquares();
+    if (lastDrop && lastDrop.square === square && Date.now() - lastDrop.at < 400) {lastDrop = null; return;}
+    selectSquare(square);
   });
+  byId('board').addEventListener('keydown', event => {
+    const square = event.target.closest('[data-square]')?.dataset.square;
+    if (!square) return;
+    if (['Enter', ' '].includes(event.key)) {
+      event.preventDefault();
+      selectSquare(square);
+    } else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+      event.preventDefault();
+      const sign = board.orientation() === 'white' ? 1 : -1;
+      const file = square.charCodeAt(0) - 97 + (event.key === 'ArrowRight' ? sign : event.key === 'ArrowLeft' ? -sign : 0);
+      const rank = Number(square[1]) + (event.key === 'ArrowUp' ? sign : event.key === 'ArrowDown' ? -sign : 0);
+      if (file >= 0 && file < 8 && rank >= 1 && rank <= 8) focusSquare(String.fromCharCode(97 + file) + rank);
+    }
+  });
+  byId('board').addEventListener('focusin', event => {
+    const square = event.target.closest('[data-square]')?.dataset.square;
+    if (square) {keyboardSquare = square; highlightSquares();}
+  });
+  byId('move-history').addEventListener('click', event => {
+    const move = event.target.closest('[data-ply]');
+    if (move) reviewPosition(Number(move.dataset.ply));
+  });
+  byId('history-first').addEventListener('click', () => reviewPosition(0));
+  byId('history-previous').addEventListener('click', () => reviewPosition(currentPly() - 1));
+  byId('history-next').addEventListener('click', () => reviewPosition(currentPly() + 1));
+  byId('history-live').addEventListener('click', () => reviewPosition(state.moves.length));
+  byId('copy-fen').addEventListener('click', copyPosition);
   byId('move-form').addEventListener('submit', event => {event.preventDefault(); if (canPlay()) act('move', {move:byId('move-input').value.trim()});});
   byId('chat-form').addEventListener('submit', event => {event.preventDefault(); sendChat();});
   byId('chat-input').addEventListener('input', () => {
@@ -529,18 +740,7 @@
     renderChatControls();
     byId('chat-input').focus({preventScroll:true});
   }));
-  byId('flip-board').addEventListener('click', () => {
-    board.flip();
-    const flipped = board.orientation() === 'black';
-    const frame = document.querySelector('.board-frame');
-    const opponent = document.querySelector('.opponent-row');
-    const human = document.querySelector('.human-row');
-    document.querySelector('.game-column').classList.toggle('flipped', flipped);
-    frame.insertAdjacentElement('beforebegin', flipped ? human : opponent);
-    frame.insertAdjacentElement('afterend', flipped ? opponent : human);
-    selected = null;
-    highlightSquares();
-  });
+  byId('flip-board').addEventListener('click', flipBoard);
   byId('new-game').addEventListener('click', openNewGame);
   byId('mode-label').addEventListener('click', openNewGame);
   byId('confirm-new-game').addEventListener('click', () => {byId('new-game-dialog').close(); act('new_game', {mode:document.querySelector('input[name=mode]:checked').value});});
@@ -556,7 +756,8 @@
     byId('promotion-dialog').close();
     act('move', {move});
   }));
-  byId('promotion-dialog').addEventListener('close', () => {pendingPromotion = null; selected = null; if (state) board.position(state.fen, false); highlightSquares();});
+  byId('cancel-promotion').addEventListener('click', () => byId('promotion-dialog').close());
+  byId('promotion-dialog').addEventListener('close', () => {pendingPromotion = null; selected = null; renderBoard(); renderStatus(); renderNavigation();});
   document.querySelectorAll('[data-tab]').forEach(button => {
     button.addEventListener('click', () => switchTab(button.dataset.tab));
     button.addEventListener('keydown', event => {
@@ -569,9 +770,24 @@
     });
   });
   byId('reconnect').addEventListener('click', reconnect);
+  document.addEventListener('keydown', event => {
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.isComposing || document.querySelector('dialog[open]')) return;
+    if (event.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+    if (event.key === 'Escape') {selected = null; highlightSquares(); boardFeedback(defaultBoardHelp());}
+    if (event.key.toLowerCase() === 'f') {event.preventDefault(); flipBoard();}
+    if (!byId('board').contains(event.target) && !event.target.closest('[role="tablist"]')) {
+      const target = event.key === 'ArrowLeft' ? currentPly() - 1 : event.key === 'ArrowRight' ? currentPly() + 1 : event.key === 'Home' ? 0 : event.key === 'End' ? state?.moves?.length : null;
+      if (target !== null && target !== undefined) {event.preventDefault(); reviewPosition(target);}
+    }
+  });
   window.addEventListener('online', () => {if (!connected) reconnect(); if (!chat.ready && !chatLoading && !chatBusy) loadChat();});
   let resizeFrame;
-  window.addEventListener('resize', () => {cancelAnimationFrame(resizeFrame); resizeFrame = requestAnimationFrame(() => {board.resize(); highlightSquares();});});
+  window.addEventListener('resize', () => {cancelAnimationFrame(resizeFrame); resizeFrame = requestAnimationFrame(() => {
+    const hadBoardFocus = byId('board').contains(document.activeElement);
+    board.resize();
+    highlightSquares();
+    if (hadBoardFocus) focusSquare(keyboardSquare);
+  });});
   setBusy(true);
   loadState().catch(error => {
     connected = false;

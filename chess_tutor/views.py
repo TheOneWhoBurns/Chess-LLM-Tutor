@@ -78,20 +78,32 @@ def public_state(profile):
     state = profile.state
     board = chess.Board()
     history = []
+    timeline = [{"fen": board.fen(), "last_move": None, "in_check": board.is_check()}]
     for uci in state["moves"]:
         move = board.parse_uci(uci)
         history.append(board.san(move))
         board.push(move)
+        timeline.append({"fen": board.fen(), "last_move": uci, "in_check": board.is_check()})
     samples = state["policy"]["samples"]
     metrics = state["metrics"]
     live_samples = metrics.get("count", samples)
     game_over = state["result"] != "*" or board.is_game_over()
+    legal_positions = {}
+    if not game_over:
+        for move in list(board.legal_moves):
+            san = board.san(move)
+            board.push(move)
+            try:
+                legal_positions[move.uci()] = {"fen": board.fen(), "last_move": move.uci(),
+                                               "in_check": board.is_check(), "san": san}
+            finally:
+                board.pop()
     status = engine_room().status()
     error = runtime_error(state)
     if error:
         status.update(ready=False, engine_error=error)
-    return {"revision": profile.revision, "fen": board.fen(), "moves": history,
-            "legal_moves": [m.uci() for m in board.legal_moves] if not game_over else [],
+    return {"revision": profile.revision, "fen": board.fen(), "moves": history, "timeline": timeline,
+            "legal_moves": list(legal_positions), "legal_positions": legal_positions,
             "last_move": state["moves"][-1] if state["moves"] else None,
             "in_check": board.is_check(), "game_over": game_over, "result": state["result"],
             "turn": "white" if board.turn else "black", "mode": state["mode"],
