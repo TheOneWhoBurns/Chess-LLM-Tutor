@@ -1,4 +1,12 @@
 .env
+.venv/
+.runtime/
+__pycache__/
+*.pyc
+.DS_Store
+nemesis.sqlite3*
+.pytest_cache/
+artifacts/
 static/vendor/chessboardjs-1.0.0
 /chess_tutor/__pycache__
 test_env.py

@@ -1,48 +1,137 @@
 {% load static %}
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Chess Tutor</title>
-    <link rel="stylesheet" href="{% static 'css/chessboard-1.0.0.min.css' %}">
-    <link rel="stylesheet" href="{% static 'css/main.css' %}">
-    <!-- Load jQuery first -->
-    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-    <!-- Load the chess library -->
-    <script src="{% static 'js/chess.min.js' %}"></script>
-    <!-- Load chessboard library -->
-    <script src="{% static 'js/chessboard-1.0.0.min.js' %}"></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1b1b1a">
+  <meta name="description" content="NEMESIS, a personal chess opponent built with Maia and Stockfish.">
+  <title>NEMESIS · Chess</title>
+  <link rel="icon" href="{% static 'img/nemesis.svg' %}" type="image/svg+xml">
+  <link rel="stylesheet" href="{% static 'css/chessboard-1.0.0.min.css' %}">
+  <link rel="stylesheet" href="{% static 'css/main.css' %}">
+  <script defer src="{% static 'js/jquery.min.js' %}"></script>
+  <script defer src="{% static 'js/chessboard-1.0.0.min.js' %}"></script>
+  <script defer src="{% static 'js/nemesis.js' %}"></script>
 </head>
 <body>
-<div class="container">
-    <div id="board-section">
-        <div id="board"></div>
-        <div class="board-controls">
-            <button onclick="resetGame()">New Game</button>
-            <button onclick="flipBoard()">Flip Board</button>
-        </div>
-    </div>
+  <header class="app-header">
+    <a class="brand" href="/" aria-label="NEMESIS home"><span class="brand-symbol" aria-hidden="true">N</span>NEMESIS</a>
+    <div class="engine-status" id="engine-status"><span class="status-dot" aria-hidden="true"></span><span id="engine-name">Connecting…</span></div>
+    <button id="new-game" class="button primary" disabled><span aria-hidden="true">＋</span> New game</button>
+  </header>
 
-    <div class="right-panel">
-        <div id="move-history">
-            <div class="history-header">
-                <h3>Move History</h3>
-            </div>
-            <div class="history-content"></div>
-        </div>
+  <main id="arena" class="workspace">
+    <div id="notice" class="notice" role="alert" hidden><span id="notice-copy"></span><button id="reconnect" type="button">Reconnect</button></div>
+    <section class="game-column" aria-label="Chess game">
+      <div class="player-row opponent-row">
+        <div class="player-identity"><span class="piece-marker black-piece" aria-hidden="true">♟</span><div><h1>NEMESIS</h1><p id="opponent-status">Loading opponent</p></div></div>
+        <button id="mode-label" class="mode-label" aria-label="Game mode. Open new game options" disabled>Adaptive</button>
+      </div>
+      <div class="board-frame"><div id="board" role="group" aria-label="Chess board" aria-describedby="board-help"></div></div>
+      <p id="board-help" class="visually-hidden">Use arrow keys to choose a square, Enter or Space to select and move, and Escape to cancel. You can also drag pieces or type a move below.</p>
+      <div class="player-row human-row">
+        <div class="player-identity"><span class="piece-marker white-piece" aria-hidden="true">♙</span><div><strong id="player-name">You</strong><p id="turn-status" role="status" aria-live="polite">Loading your position…</p></div></div>
+        <span id="game-result" class="game-result" hidden></span>
+        <span class="thinking-indicator" aria-hidden="true"><i></i><i></i><i></i></span>
+      </div>
+      <div class="board-navigation" role="group" aria-label="Browse game positions">
+        <span id="position-label" role="status" aria-live="polite">Current position</span>
+        <button id="history-first" type="button" aria-label="Starting position" title="Starting position (Home)" disabled>⏮</button>
+        <button id="history-previous" type="button" aria-label="Previous move" title="Previous move (Left arrow)" disabled>‹</button>
+        <button id="history-next" type="button" aria-label="Next move" title="Next move (Right arrow)" disabled>›</button>
+        <button id="history-live" type="button" title="Return to current position (End)" disabled>Live</button>
+      </div>
+      <div class="board-toolbar">
+        <button id="flip-board" type="button" title="Flip board (F)" aria-pressed="false"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M6 3v13m-3-3 3 3 3-3m5 4V4m-3 3 3-3 3 3"/></svg><span>Flip</span></button>
+        <button id="copy-fen" type="button" title="Copy the displayed position as FEN" disabled><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M7 6h9v11H7zM4 14H3V3h9v1"/></svg><span>Copy FEN</span></button>
+        <a href="/api/export/" title="Download this game as PGN"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 3v10m-4-4 4 4 4-4M4 13v4h12v-4"/></svg><span>PGN</span></a>
+        <span class="toolbar-space"></span>
+        <button id="claim-draw" type="button" disabled><span class="draw-icon" aria-hidden="true">½</span><span>Claim draw</span></button>
+        <button id="resign" type="button" disabled><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M5 17V3m0 1c4-4 6 4 10 0v8c-4 4-6-4-10 0"/></svg><span>Resign</span></button>
+      </div>
+      <form id="move-form" class="move-form">
+        <label for="move-input">Move</label>
+        <input id="move-input" name="move" placeholder="e4, Nf3, O-O" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="16" required disabled aria-label="Enter a chess move in SAN or UCI notation">
+        <button type="submit" class="button" disabled>Play <span aria-hidden="true">↵</span></button>
+        {% csrf_token %}
+      </form>
+      <p id="board-feedback" class="board-feedback" role="status" aria-live="polite">Select a piece to see legal moves · F to flip</p>
+    </section>
 
-        <div id="chat-container">
-            <div id="chat-messages"></div>
-            <form id="chat-form">
-                <input type="text" id="user-input" placeholder="Type your move or message...">
-                <button type="submit">Send</button>
-                {% csrf_token %}
-            </form>
+    <aside class="side-pane" aria-label="Game information">
+      <section class="moves-section" aria-labelledby="moves-title">
+        <div class="pane-heading"><h2 id="moves-title">Moves</h2><span id="move-count" class="quiet mono">Game 1</span></div>
+        <div class="move-columns" aria-hidden="true"><span></span><span>White</span><span>Black</span></div>
+        <div id="move-history" class="move-history" tabindex="0" aria-label="Game moves"><p class="empty-moves">White to move.</p></div>
+      </section>
+      <p id="review-notice" class="review-notice" hidden>You’re viewing an earlier position. Analysis follows the current game; return to Live to chat or play.</p>
+      <div class="tabs" role="tablist" aria-label="Coach and opponent information">
+        <button id="chat-tab" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="chat-panel" data-tab="chat">Chat</button>
+        <button id="analysis-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel" tabindex="-1" data-tab="analysis">Analysis</button>
+        <button id="player-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="player-panel" tabindex="-1" data-tab="player">Player model</button>
+      </div>
+      <section id="chat-panel" class="tab-panel chat-panel" role="tabpanel" aria-labelledby="chat-tab">
+        <div class="chat-heading"><h2>Your coach</h2><span id="chat-model" class="chat-model">Connecting…</span></div>
+        <p id="chat-context" class="chat-context">Uses your current game and player model.</p>
+        <div id="chat-messages" class="chat-messages" role="log" aria-label="Conversation with your chess coach" aria-live="polite" aria-relevant="additions" tabindex="0">
+          <div id="chat-empty" class="chat-empty"><h3>Talk through your game.</h3><p>Ask about a mistake, NEMESIS’s last move, or what to practice next.</p></div>
         </div>
-    </div>
-</div>
+        <div id="chat-thinking" class="chat-thinking" role="status" hidden><span class="chat-thinking-dot" aria-hidden="true"></span><span>Reading your position…</span></div>
+        <div id="chat-error" class="chat-error" role="alert" hidden><p id="chat-error-copy"></p><button id="chat-retry" type="button">Retry</button></div>
+        <div id="chat-prompts" class="chat-prompts" aria-label="Conversation starters">
+          <button type="button" data-chat-prompt="Explain my last mistake.">My last mistake <span aria-hidden="true">↗</span></button>
+          <button type="button" data-chat-prompt="Why did NEMESIS play that move?">Why that move? <span aria-hidden="true">↗</span></button>
+          <button type="button" data-chat-prompt="Based on my games, what should I practice next?">What to practice <span aria-hidden="true">↗</span></button>
+        </div>
+        <form id="chat-form" class="chat-form">
+          <label class="visually-hidden" for="chat-input">Message your chess coach</label>
+          <textarea id="chat-input" name="message" rows="2" maxlength="4000" placeholder="Ask about your game…" aria-describedby="chat-input-hint" required></textarea>
+          <div class="chat-compose-footer"><span id="chat-input-hint">Enter to send · Shift + Enter for a new line</span><button id="chat-send" type="submit" class="button primary" disabled>Send <span aria-hidden="true">↑</span></button></div>
+        </form>
+      </section>
+      <section id="analysis-panel" class="tab-panel" role="tabpanel" aria-labelledby="analysis-tab" hidden>
+        <div id="analysis-empty" class="empty-analysis"><span class="small-heading">Move selection</span><h3>Play your first move.</h3><p>NEMESIS evaluates likely replies to choose its continuation. Its reasoning will appear here after it moves.</p><div class="model-caption"><span id="model-name">Maia + personal policy</span><span>Evaluated by Stockfish</span></div></div>
+        <div id="decision-detail" hidden>
+          <div class="decision-head"><div><span class="small-heading">NEMESIS played</span><strong id="decision-move">—</strong></div><span id="decision-label" class="decision-label"></span></div>
+          <div class="decision-comparison"><div><span>Stockfish choice</span><strong id="baseline-move">—</strong></div><div><span title="Centipawns behind Stockfish's original root-search choice.">Initial search cost</span><strong id="engine-cost">—</strong></div></div>
+          <p id="decision-description" class="detail-copy"></p>
+          <div class="subheading"><h3>Predicted replies</h3><span>Estimates</span></div>
+          <p class="table-caption">Your next move, before it is played.</p>
+          <div id="replies-table"></div>
+          <div class="estimate-footer"><span>Expected reply loss</span><strong id="expected-regret">—</strong></div>
+          <details class="candidate-details"><summary>Candidate moves <span id="search-detail"></span></summary><p id="candidate-benchmark" class="table-caption"></p><div id="candidates-table"></div><p class="table-note">Scores are from NEMESIS’s perspective after evaluating your best reply. Cost is the gap to the best score in that search. Eligible moves are compared using score plus expected loss, weighted by the player model.</p></details>
+          <details id="remaining-replies" class="remaining-replies" hidden><summary>Other predicted replies <span id="remaining-reply-count"></span></summary><div id="remaining-replies-table" tabindex="0" aria-label="Other predicted replies"></div></details>
+        </div>
+      </section>
+      <section id="player-panel" class="tab-panel" role="tabpanel" aria-labelledby="player-tab" hidden>
+        <div class="profile-heading"><h3>Personal policy</h3><span id="profile-state" class="quiet">Maia prior</span></div>
+        <p id="profile-description" class="detail-copy">No personal history yet. Predictions start with the pretrained Maia 1500 model.</p>
+        <dl class="profile-statistics"><div><dt>Learned choices</dt><dd id="profile-samples">0</dd></div><div><dt>Live choices</dt><dd id="profile-live-samples">0</dd></div><div><dt>Mean live loss</dt><dd id="profile-loss">—</dd></div></dl>
+        <section id="imported-history" class="imported-history" aria-labelledby="imported-history-title" hidden>
+          <div class="subheading"><h3 id="imported-history-title">Imported history</h3><span>Chess.com</span></div>
+          <p id="imported-account" class="imported-account"></p>
+          <p id="imported-fit" class="table-caption"></p>
+          <div class="subheading"><h3>Chronological holdout</h3><span>Frozen evaluation</span></div>
+          <p id="holdout-scope" class="table-caption"></p>
+          <table class="data-table prediction-summary"><thead><tr><th scope="col">Model</th><th scope="col">Log loss</th><th scope="col">Top choice</th></tr></thead><tbody><tr><th scope="row">Maia prior</th><td id="history-prior-log-loss">—</td><td id="history-prior-accuracy">—</td></tr><tr><th scope="row">Personal</th><td id="history-personal-log-loss">—</td><td id="history-personal-accuracy">—</td></tr></tbody></table>
+          <p id="holdout-result" class="holdout-result"></p>
+          <p class="table-note">These scores were recorded before the final fit on all games. Lower log loss is better; top choice is the share of moves predicted correctly.</p>
+        </section>
+        <div class="subheading"><h3>Live prediction accuracy</h3><span id="profile-games">0 completed games</span></div>
+        <p class="table-caption">Measured before learning each live move. Lower log loss is better.</p>
+        <table class="data-table prediction-summary"><thead><tr><th scope="col">Model</th><th scope="col">Log loss</th><th scope="col">Top choice</th></tr></thead><tbody><tr><th scope="row">Maia prior</th><td id="prior-log-loss">—</td><td id="prior-hits">—</td></tr><tr><th scope="row">Personal</th><td id="personal-log-loss">—</td><td id="personal-hits">—</td></tr></tbody></table>
+        <details class="observations-details" open><summary>Live choices <span id="observation-count"></span></summary><p class="table-caption">Probability assigned to the move you actually played.</p><div id="observations-table"></div></details>
+        <details class="archive-details"><summary>Previous games <span id="archive-count"></span></summary><div id="archive-list"></div></details>
+        <div class="profile-footer"><p id="profile-storage">One personal profile, linked to this browser and saved on this server.</p><a href="/api/export/?format=json">Export data <span aria-hidden="true">↗</span></a><button id="forget-profile" type="button" disabled>Reset player model</button></div>
+      </section>
+      <div class="pane-footer"><span id="model-status">Waiting for engine</span><span class="quiet">Personal chess</span></div>
+    </aside>
+  </main>
 
-<!-- Load our custom scripts last -->
-<script src="{% static 'js/chess.js' %}"></script>
-<script src="{% static 'js/chat.js' %}"></script>
+  <dialog id="new-game-dialog" aria-labelledby="new-game-title"><form method="dialog"><h2 id="new-game-title">New game</h2><p>Your current game is archived. Your player model carries over.</p><fieldset><legend>Opponent</legend><label class="mode-choice"><input type="radio" name="mode" value="adaptive" checked><span><strong>NEMESIS <span class="choice-tag">Adaptive</span></strong><small>Uses Maia and your observed moves to predict replies. Chooses among sound moves evaluated by Stockfish.</small></span></label><label class="mode-choice"><input type="radio" name="mode" value="baseline"><span><strong>Stockfish <span class="choice-tag">Baseline</span></strong><small>Plays the engine’s best move. The player model still learns, so you can compare the two modes.</small></span></label></fieldset><p class="dialog-note">You play white. No clock.</p><div class="dialog-actions"><button class="button" value="cancel">Cancel</button><button id="confirm-new-game" type="button" class="button primary">Start game</button></div></form></dialog>
+  <dialog id="promotion-dialog" aria-labelledby="promotion-title"><h2 id="promotion-title">Promote pawn</h2><p>Choose a piece.</p><div class="promotion-options"><button type="button" data-promotion="q"><span aria-hidden="true">♕</span>Queen</button><button type="button" data-promotion="r"><span aria-hidden="true">♖</span>Rook</button><button type="button" data-promotion="b"><span aria-hidden="true">♗</span>Bishop</button><button type="button" data-promotion="n"><span aria-hidden="true">♘</span>Knight</button></div><div class="dialog-actions"><button id="cancel-promotion" class="button" type="button">Cancel</button></div></dialog>
+  <dialog id="copy-position-dialog" aria-labelledby="copy-position-title"><h2 id="copy-position-title">Copy position</h2><p>Copy this FEN to use the displayed position in another chess tool.</p><textarea id="position-fen" readonly rows="4" aria-label="Position FEN"></textarea><form method="dialog" class="dialog-actions"><button class="button primary">Close</button></form></dialog>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title"><h2 id="confirm-title"></h2><p id="confirm-copy"></p><div class="dialog-actions"><button id="confirm-cancel" class="button" type="button">Cancel</button><button id="confirm-action" class="button primary" type="button">Confirm</button></div></dialog>
 </body>
 </html>
