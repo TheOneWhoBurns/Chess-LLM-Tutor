@@ -86,9 +86,16 @@ class Stockfish:
                 if not info.get('pv') or info['pv'][0] not in board.legal_moves or 'score' not in info:
                     raise EngineUnavailable('Stockfish returned an incomplete analysis. The move was not saved.')
                 score = info['score'].pov(board.turn)
+                line_board = board.copy()
+                line = []
+                for move in info['pv'][:8]:
+                    if move not in line_board.legal_moves:
+                        raise EngineUnavailable('Stockfish returned an invalid continuation. Please retry.')
+                    line.append(move.uci())
+                    line_board.push(move)
                 rows.append({'move': info['pv'][0], 'score': score.score(mate_score=MATE),
                              'mate': score.mate(), 'depth': info.get('depth', 0),
-                             'nodes': info.get('nodes', 0)})
+                             'nodes': info.get('nodes', 0), 'pv': line})
             if len(rows) != expected or len({r['move'] for r in rows}) != expected:
                 raise EngineUnavailable('Stockfish did not evaluate the required legal moves. Please retry.')
             return sorted(rows, key=lambda r: (-r['score'], r['move'].uci()))

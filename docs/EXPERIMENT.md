@@ -73,6 +73,27 @@ The live baseline mode continues training the same adapter. Alternating ordinary
 
 ## Practice outcomes and reproducibility
 
+The `/practice/` flow is a separate intervention. It extracts confirmed mistakes
+from saved local games or a verified imported archive, records the first legal
+retry, and schedules repeated-position checks. The initial intervals are 1, 3,
+7, 14, and 30 days; assisted, wrong, and revealed answers return after one day.
+Intervals are prototype settings, not estimates of an optimal learning schedule.
+
+Record hint use and whether an attempt is a first retry or a delayed check.
+The displayed unaided-retention numerator excludes hints and revealed answers;
+its denominator includes all completed delayed checks, including failures.
+Elapsed attempt time includes inactive-tab time. Neither solving the same
+position repeatedly nor progressing through the intervals demonstrates mastery
+of a chess concept. JSON exports include the analysis evidence and attempt
+records separately from the move-prediction model, which practice never updates.
+
+To test educational value, compare equal-time practice conditions with equal
+coaching access. Use unseen, independently selected assessment positions and
+subsequent unassisted games, and report uncertainty at the game/session level.
+The app does not yet implement that controlled transfer assessment. Avoid using
+an exercised position or one of its displayed continuations as an independent
+assessment item.
+
 Before a training study, define a session schedule, assessment procedure, and success measure. Use independent assessment positions before and after practice, control access to hints, and keep game conditions consistent. Randomize or counterbalance practice conditions where feasible, and disclose order effects and the limitations of a single subject. The present app plays White without a clock; it does not record decision time.
 
 Keep Astra access consistent between opponent conditions, or study coaching as a separate condition. Record when advice was available and requested, retain the transcript and model identifier, and withhold hints during independent assessments. An improvement after coached practice cannot be attributed solely to the adaptive opponent. Engine-grounded context reduces unsupported claims but does not make every generated explanation correct; review advice used as study material. Mocked chat tests verify integration behavior, not provider availability or teaching effectiveness.
